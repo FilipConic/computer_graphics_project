@@ -1534,10 +1534,10 @@ void cyx_hashmap_print(const void* map);
 #define cyx_hashmap_length(map) (__CYX_HASHMAP_GET_HEADER(map)->len)
 #define cyx_hashmap_foreach(val, map) __CYX_HASHMAP_TYPECHECK(map); \
 	size_t __CYX_UNIQUE_VAL__(i) = 0; \
-	for (typeof(map->value)* val = (void*)((char*)map + __CYX_HASHMAP_GET_HEADER(map)->size_key); \
+	for (typeof(*map)* val = (void*)(map); \
 		__CYX_UNIQUE_VAL__(i) < __CYX_HASHMAP_GET_HEADER(map)->cap; \
 		++__CYX_UNIQUE_VAL__(i), \
-		val = (typeof(map->value)*)((char*)val + __CYX_HASHMAP_GET_HEADER(map)->size)) \
+		val = (typeof(*map)*)((char*)val + __CYX_HASHMAP_GET_HEADER(map)->size)) \
 		if (cyx_bitmap_get(__CYX_HASHMAP_GET_BITMAP(map), 2 * __CYX_UNIQUE_VAL__(i)) && \
 			!cyx_bitmap_get(__CYX_HASHMAP_GET_BITMAP(map), 2 * __CYX_UNIQUE_VAL__(i) + 1))
 
@@ -1747,8 +1747,6 @@ void* __cyx_hashmap_get(struct __CyxHashMapFuncParams params) {
 				 head->eq_fn((char*)params.__map + probe * head->size, params.__key) :
 				 head->eq_fn(*(void**)((char*)params.__map + probe * head->size), *(void**)params.__key)) {
 				res = (char*)params.__map + probe * head->size + head->size_key;
-				break;
-			} else {
 				break;
 			}
 		}
