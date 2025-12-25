@@ -5,8 +5,8 @@ BUILD_DIR = ./build
 TARGET = main
 
 SRCS_DIR = ./srcs
-SRCS = main.c ttf.c vec2.c ear_clipping.c font.c
-OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)
+SRCS = ttf.c vec2.c ear_clipping.c font.c
+OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)  $(BUILD_DIR)/main.o
 
 INC_DIR = ./includes/
 LIB_DIR = ./libs/
@@ -24,6 +24,9 @@ $(TARGET): $(OBJS)
 	$(CC) $(FLAGS) $^ -o $@ $(FLAGS_EXTRA)
 
 $(BUILD_DIR)/%.o: $(SRCS_DIR)/%.c
+	$(CC) $(FLAGS) -c $< -o $@ $(FLAGS_EXTRA)
+
+$(BUILD_DIR)/main.o: $(SRCS_DIR)/main.c $(INC_DIR)/context.h
 	$(CC) $(FLAGS) -c $< -o $@ $(FLAGS_EXTRA)
 
 clear:

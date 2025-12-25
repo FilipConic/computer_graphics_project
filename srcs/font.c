@@ -97,51 +97,93 @@ void font_free(FontTTF* font) {
 	ttf_free(&font->ttf);
 }
 
-Sentence __sentence_create(struct __SentenceCreateParams params) {
-	Sentence res = {
-		.pos = (Vec2i){ .x = params.x, .y = params.y },
+Text __text_create(struct __TextCreateParams params) {
+	Text res = {
+		.font = params.__font,
 		.screen_width = params.__screen_width,
 		.screen_height = params.__screen_height,
+		.width = params.__width,
+		.height = params.__height,
+
+		.pos = (Vec2i){ .x = params.x, .y = params.y },
 		.word_wrapping = params.word_wrapping,
-		.characters = cyx_str_new(),
+		.is_static = params.is_static,
+
+		.row_height = (int)(2.5 * params.__font->size),
 		.letters = cyx_array_new(Letter),
 	};
+
+	if (!params.is_static) {
+		res.characters = cyx_str_new();
+	} else {
+		assert(params.text && "ASSERT: You need to provide text to text_create when making it static!");
+		res.characters = cyx_str_new();
+		for (size_t i = 0; i < strlen(params.text); ++i) {
+			text_push(&res, params.text[i]);
+		}
+	}
+
 	return res;
 }
-void sentence_show(Sentence* s) {
-	for (size_t i = 0; i < cyx_array_length(s->letters); ++i) {
-		if (s->characters[i] != ' ') {
-			poly_draw(&s->letters[i].poly);
+void text_show(Text* s) {
+	for (size_t i = 0, j = 0; i < cyx_array_length(s->letters); ++j) {
+		if (s->characters[j] > ' ') {
+			poly_draw(&s->letters[i++].poly);
+		} else if (s->characters[j] == ' ') {
+			++i;
 		}
 	}
 }
-void sentence_push(Sentence* s, FontTTF* font, char c) {
-	Letter* letter = font_get(font, c);
-	if (!letter) { return; }
-	if (cyx_str_length(s->characters)) {
-		Letter* last = cyx_array_at(s->letters, -1);
+void text_push(Text* s, char c) {
+	Letter* letter = font_get(s->font, c);
 
-		Letter new_letter = *letter;
-		new_letter.poly.pos = (Vec2i){
-			.x = last->poly.pos.x + last->advance,
-			.y = s->pos.y,
-		};
-		cyx_array_append(s->letters, new_letter);
+	if (!letter) { return; }
+	Letter new_letter = *letter;
+
+	if (c != '\n') {
+		if (!s->last_was_newline) {
+			if (cyx_array_length(s->letters)) {
+				Letter* last = cyx_array_at(s->letters, -1);
+				new_letter.poly.pos = vec2i(last->poly.pos.x + last->advance, last->poly.pos.y);
+				if (s->word_wrapping && new_letter.poly.pos.x > s->pos.x + s->width) {
+					s->row_count++;
+					new_letter.poly.pos = vec2i(s->pos.x, s->screen_height - s->pos.y - (s->row_count + 1) * s->row_height);
+					new_letter.goes_to_next_row = 1;
+				}
+			} else {
+				new_letter.poly.pos = vec2i(s->pos.x, s->screen_height - s->pos.y - s->row_height);
+			}
+		} else {
+			new_letter.poly.pos = vec2i(s->pos.x, s->screen_height - s->pos.y - (s->row_count + 1) * s->row_height);
+			s->last_was_newline = 0;
+		}
 	} else {
-		Letter new_letter = *letter;
-		new_letter.poly.pos = s->pos;
+		++s->row_count;
+		s->last_was_newline = 1;
+	}
+	if (!s->last_was_newline) {
 		cyx_array_append(s->letters, new_letter);
 	}
 	cyx_str_append_char(&s->characters, c);
 	// printf(CYX_STR_FMT "\n", CYX_STR_UNPACK(s->characters));
 }
-void sentence_pop(Sentence* s) {
+void text_pop(Text* s) {
 	if (cyx_str_length(s->characters)) {
-		cyx_array_pop(s->letters);
+		char c = s->characters[cyx_str_length(s->characters) - 1];
+		if (c != '\n') {
+			if (cyx_array_length(s->letters)) {
+				if (s->word_wrapping && (cyx_array_at(s->letters, -1))->goes_to_next_row) {
+					--s->row_count;
+				}
+				cyx_array_pop(s->letters);
+			}
+		} else {
+			--s->row_count;
+		}
 		cyx_str_pop(s->characters);
 	}
 }
-void sentence_free(Sentence* s) {
+void text_free(Text* s) {
 	cyx_str_free(s->characters);
 	cyx_array_free(s->letters);
 }
