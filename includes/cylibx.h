@@ -1,6 +1,7 @@
 #ifndef __CYLIBX_H__
 #define __CYLIBX_H__
 
+#include <ctype.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -61,10 +62,10 @@ void __cyx_temp_reset_deleted() {
 	if (!__cyx_temp_deleted.buffer_count && !__cyx_temp_deleted.fn_count) { return; }
 
 	for (size_t i = 0; i < __cyx_temp_deleted.fn_count; ++i) {
-		struct __DeletedFN* curr = &__cyx_temp_deleted.fns[i];
-		if (curr->defer_fn) {
-			curr->defer_fn(!curr->is_ptr ? curr->byte_pos : *(void**)(curr->byte_pos));
-		}
+		// struct __DeletedFN* curr = &__cyx_temp_deleted.fns[i];
+		// if (curr->defer_fn) {
+		// 	curr->defer_fn(!curr->is_ptr ? curr->byte_pos : *(void**)(curr->byte_pos));
+		// }
 	}
 
 	__cyx_temp_deleted.fn_count = 0;
@@ -148,18 +149,24 @@ typedef struct {
 char* cyx_str_new();
 char* cyx_str_from_lit_n(const char* c_str, size_t n);
 char* cyx_str_from_file(const char* file_path);
+char* cyx_str_append_char(char** str, char c);
 char* cyx_str_append_lit_n(char** str, const char* c_str, size_t n);
 char* cyx_str_append_file(char** str, const char* file_path);
+void cyx_str_remove(char* str, int pos);
 void cyx_str_free(void* str);
 void cyx_str_print(const void* str);
 int cyx_str_eq(const void* val1, const void* val2);
 int cyx_str_cmp(const void* val1, const void* val2);
+size_t cyx_str_count_char(char* str, char c);
+uint64_t cyx_str_parse_uint(const char* str, size_t from, int* to);
+int64_t cyx_str_parse_int(const char* str, size_t from, int* to);
 
 #define cyx_str_length(str) (__CYX_STRING_GET_HEADER(str)->len)
 #define CYX_STR_FMT "%.*s"
 #define CYX_STR_UNPACK(str) (int)cyx_str_length(str), str
 
 #define cyx_str_from_lit(c_str) cyx_str_from_lit_n(c_str, strlen(c_str))
+#define cyx_str_pop(str) cyx_str_remove(str, -1)
 #define cyx_str_copy(str) (__CYX_STRING_TYPECHECK(str), cyx_str_from_lit_n(str, cyx_str_length(other)))
 #define cyx_str_append_lit(str, c_str) cyx_str_append_lit_n(str, c_str, strlen(c_str))
 #define cyx_str_append_str(self, other) (__CYX_STRING_TYPECHECK(other), cyx_str_append_lit_n(self, other, cyx_str_length(other)))
@@ -171,6 +178,7 @@ int cyx_str_cmp(const void* val1, const void* val2);
 
 #define str_length(str) cyx_str_length(str)
 #define str_from_lit(c_str) cyx_str_from_lit(c_str)
+#define str_pop(str) cyx_str_remove(str, -1)
 #define str_copy(str) cyx_str_copy(str)
 #define str_append_lit(str, c_str) cyx_str_append_lit(str, c_str)
 #define str_append_str(self, other) cyx_str_append_str(self, other)
@@ -178,12 +186,17 @@ int cyx_str_cmp(const void* val1, const void* val2);
 #define str_new cyx_str_new
 #define str_from_lit_n cyx_str_from_lit_n
 #define str_from_file cyx_str_from_file
+#define str_append_char cyx_str_append_char
 #define str_append_lit_n cyx_str_append_lit_n
 #define str_append_file cyx_str_append_file
+#define str_remove cyx_str_remove
 #define str_free cyx_str_free
 #define str_print cyx_str_print
 #define str_eq cyx_str_eq
 #define str_cmp cyx_str_cmp
+#define str_count_char cyx_str_count_char
+#define str_parse_uint cyx_str_parse_uint
+#define str_parse_int cyx_str_parse_int
 
 #endif // CYLIBX_STRIP_PREFIX
 
@@ -211,12 +224,14 @@ void __cyx_str_expand(char** str_ptr, size_t n) {
 	size_t new_cap = head->cap;
 	while (new_cap < head->len + n) { new_cap <<= 1; }
 	if (new_cap == head->cap) { return; }
+	size_t old_len = head->len;
 
 	__CyxStringHeader* new_head = malloc(__CYX_STRING_HEADER_SIZE + __CYX_TYPE_SIZE + new_cap * sizeof(char));
 	memcpy(new_head, head, __CYX_STRING_HEADER_SIZE);
 	enum __CyxDataType* type = (void*)(new_head + 1);
 	*type = __CYX_TYPE_STRING;
 	char* new_str = (void*)(type + 2);
+	memcpy(new_str, str, old_len * sizeof(char));
 	free(head);
 	*str_ptr = new_str;
 }
@@ -249,6 +264,15 @@ char* cyx_str_append_lit_n(char** str_ptr, const char* c_str, size_t n) {
 	memcpy(str + cyx_str_length(str),  c_str + i - __CYX_BUFFER_SIZE, i - n);
 	return *str_ptr;
 }
+char* cyx_str_append_char(char** str_ptr, char c) {
+	__CYX_STRING_TYPECHECK(*str_ptr);
+
+	__cyx_str_expand(str_ptr, 1);
+	char* str = *str_ptr;
+	__CyxStringHeader* head = __CYX_STRING_GET_HEADER(str);
+	str[head->len++] = c;
+	return *str_ptr;
+}
 char* cyx_str_append_file(char** str_ptr, const char* file_path) {
 	__CYX_STRING_TYPECHECK(*str_ptr);
 
@@ -269,6 +293,16 @@ char* cyx_str_append_file(char** str_ptr, const char* file_path) {
 	}
 
 	return *str_ptr;
+}
+void cyx_str_remove(char* str, int pos) {
+	__CYX_STRING_TYPECHECK(str);
+
+	__CyxStringHeader* head = __CYX_STRING_GET_HEADER(str);
+
+	if (pos < 0) { pos += head->len; }
+	assert(pos < (int)head->len);
+	memmove(str + pos, str + pos + 1, (head->len - pos) * sizeof(char));
+	head->len--;
 }
 void cyx_str_free(void* str) {
 	__CYX_STRING_TYPECHECK(str);
@@ -300,6 +334,58 @@ int cyx_str_cmp(const void* val1, const void* val2) {
 	if (ret < 0) return -1;
 	else if (ret > 0) return 1;
 	else return 0;
+}
+size_t cyx_str_count_char(char* str, char c) {
+	size_t sum = 0;
+	for (size_t i = 0; i < cyx_str_length(str); ++i) {
+		if (str[i] == c) { ++sum; }
+	}
+	return sum;
+}
+uint64_t cyx_str_parse_uint(const char* str, size_t from, int* to) {
+	if (from >= cyx_str_length(str)) { return 0; }
+	size_t till = (!to || *to <= (int)from || *to >= (int)cyx_str_length(str) ? cyx_str_length(str) : (size_t)*to);
+	size_t i = from;
+
+	char buffer[21] = { 0 };
+	short count = 0;
+	for (; i < till; ++i) {
+		if (isdigit(str[i])) {
+			buffer[count++] = str[i];
+		} else { break; }
+
+		if (count == 21) { break; }
+	}
+	if (to) { *to = i; }
+
+	buffer[count] = '\0';
+	return atol(buffer);
+}
+int64_t cyx_str_parse_int(const char* str, size_t from, int* to) {
+	if (from >= cyx_str_length(str)) { return 0; }
+	size_t till = (!to || *to <= (int)from || *to >= (int)cyx_str_length(str) ? cyx_str_length(str) : (size_t)*to);
+
+	size_t i = from;
+	char is_neg = 0;
+	if (str[i] == '-') {
+		is_neg = 1;
+		++i;
+	}
+
+	char buffer[21] = { 0 };
+	short count = 0;
+	for (; i < till; ++i) {
+		if (isdigit(str[i])) {
+			buffer[count++] = str[i];
+		} else { break; }
+
+		if (count == 21) { break; }
+	}
+	if (to) { *to = i; }
+	if (!count) { return 0; }
+
+	buffer[count] = '\0';
+	return !is_neg ? atol(buffer) : -atol(buffer);
 }
 
 #endif // CYLIBX_IMPLEMENTATION
@@ -347,12 +433,15 @@ void* __cyx_array_new(struct __CyxArrayParams params);
 void* __cyx_array_copy(void* arr);
 void __cyx_array_expand(void** arr_ptr, size_t n);
 void __cyx_array_append(void** arr, void* val);
+void __cyx_array_append_mult_n(void** arr_ptr, size_t n, const void* mult);
+void __cyx_array_insert(void** arr, void* val, int pos);
 void* __cyx_array_remove(void* arr, int pos);
 void* __cyx_array_at(void* arr, int pos);
 void cyx_array_free(void* arr);
-void __cyx_array_append_mult_n(void** arr_ptr, size_t n, const void* mult);
 void cyx_array_print(const void* arr);
+void cyx_array_clear(void* arr);
 
+void cyx_array_reverse(void* arr);
 void __cyx_array_sort(void* arr, int start, int end);
 void* __cyx_array_map(const void* arr, void (*fn)(void*, const void*));
 void* cyx_array_map_self(void* arr, void (*fn)(void*, const void*));
@@ -375,12 +464,16 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 #define cyx_array_copy(arr) (typeof(*arr)*)__cyx_array_copy(arr)
 #define cyx_array_append(arr, val) do { \
 	typeof(*arr) v = (val); \
-	__cyx_array_append((void**)&arr, &v); \
+	__cyx_array_append((void**)&(arr), &v); \
 } while(0)
 #define cyx_array_append_mult_n(arr, n, mult) __cyx_array_append_mult_n((void**)&(arr), n, mult)
 #define cyx_array_append_mult(arr, ...) do { \
 	typeof(*arr) mult[] = { __VA_ARGS__ }; \
 	__cyx_array_append_mult_n((void**)&(arr), sizeof(mult)/sizeof(*(mult)), mult); \
+} while(0)
+#define cyx_array_insert(arr, val, pos) do { \
+	typeof(*arr) v = (val); \
+	__cyx_array_insert((void**)&(arr), &v, pos); \
 } while(0)
 #define cyx_array_remove(arr, pos) (typeof(*arr)*)__cyx_array_remove(arr, pos)
 #define cyx_array_pop(arr) (typeof(*arr)*)__cyx_array_remove(arr, -1)
@@ -409,6 +502,7 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 #define array_append(arr, val) cyx_array_append(arr, val)
 #define array_append_mult_n(arr, n, mult) cyx_array_append_mult_n(arr, n, mult)
 #define array_append_mult(arr, ...) cyx_array_append_mult(arr, __VA_ARGS__)
+#define array_insert(arr, val, pos) cyx_array_insert(arr, val, pos)
 #define array_remove(arr, pos) cyx_array_remove(arr, pos)
 #define array_pop(arr) cyx_array_pop(arr)
 #define array_at(arr, pos) cyx_array_at(arr, pos)
@@ -420,6 +514,8 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 
 #define array_free cyx_array_free
 #define array_print cyx_array_print
+#define array_clear cyx_array_clear
+#define array_reverse cyx_array_reverse
 #define array_map_self cyx_array_map_self
 #define array_filter_self cyx_array_filter_self
 #define array_find cyx_array_find
@@ -455,11 +551,11 @@ void* __cyx_array_copy(void* arr) {
 	__CYX_ARRAY_TYPECHECK(arr);
 	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
 
-	__CyxArrayHeader* res_head = malloc(__CYX_ARRAY_HEADER_SIZE + head->cap * head->size);
+	__CyxArrayHeader* res_head = malloc(__CYX_ARRAY_HEADER_SIZE + __CYX_TYPE_SIZE + head->cap * head->size);
 	if (!res_head) { return NULL; }
-	memcpy(res_head, head, __CYX_ARRAY_HEADER_SIZE + head->len * head->size);
+	memcpy(res_head, head, __CYX_ARRAY_HEADER_SIZE + __CYX_TYPE_SIZE + head->cap * head->size);
 
-	enum __CyxDataType* type = (void*)(head + 1);
+	enum __CyxDataType* type = (void*)(res_head + 1);
 	*type = __CYX_TYPE_ARRAY;
 	return (void*)(type + 2);
 }
@@ -488,22 +584,32 @@ void __cyx_array_append(void** arr, void* val) {
 	}
 	memcpy(__CYX_DATA_GET_AT(head, *arr, head->len++), val, head->size);
 }
+void __cyx_array_insert(void** arr, void* val, int pos) {
+	__CYX_ARRAY_TYPECHECK(*arr);
+
+	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(*arr);
+	if (pos < 0) { pos += head->len; }
+	if (head->len == head->cap) {
+		__cyx_array_expand(arr, 1);
+		head = __CYX_ARRAY_GET_HEADER(*arr);
+	}
+	memmove(__CYX_DATA_GET_AT(head, *arr, pos + 1), __CYX_DATA_GET_AT(head, *arr, pos), (head->len - pos) * head->size);
+	memcpy(__CYX_DATA_GET_AT(head, *arr, pos), val, head->size);
+	++head->len;
+}
 void* __cyx_array_remove(void* arr, int pos) {
 	__CYX_ARRAY_TYPECHECK(arr);
 
 	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
 	if (pos < 0) { pos += head->len; }
 	assert(pos < (int)head->len);
+
+	if (pos + 1 != (int)head->len) {
+		memmove(__CYX_DATA_GET_AT(head, arr, pos), __CYX_DATA_GET_AT(head, arr, pos + 1), (head->len - pos) * head->size);
+	}
 	--head->len;
 
-	void* ret;
-	if (head->defer_fn) {
-		memcpy(__CYX_DATA_GET_AT(head, arr, pos), __CYX_DATA_GET_AT(head, arr, head->len), head->size);
-		ret = __cyx_temp_alloc_deleted(head->size, __CYX_DATA_GET_AT(head, arr, head->len), head->is_ptr, head->defer_fn);
-	} else {
-		__CYX_SWAP(__CYX_DATA_GET_AT(head, arr, pos), __CYX_DATA_GET_AT(head, arr, head->len), head->size);
-		ret = __CYX_DATA_GET_AT(head, arr, head->len);
-	}
+	void* ret = NULL;
 	return ret;
 }
 void* __cyx_array_at(void* arr, int pos) {
@@ -568,7 +674,23 @@ void cyx_array_print(const void* arr) {
 	}
 	printf(" }");
 }
+void cyx_array_clear(void* arr) {
+	__CYX_ARRAY_TYPECHECK(arr);
+	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
+	head->len = 0;
+}
 
+void cyx_array_reverse(void* arr) {
+	__CYX_ARRAY_TYPECHECK(arr);
+
+	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
+
+	if (head->len <= 1) { return; }
+
+	for (size_t i = 0, j = head->len - 1; i < j; ++i, --j) {
+		__CYX_SWAP(__CYX_DATA_GET_AT(head, arr, i), __CYX_DATA_GET_AT(head, arr, j), head->size);
+	}
+}
 void __cyx_array_sort(void* arr, int start, int end) {
 	__CYX_ARRAY_TYPECHECK(arr);
 
@@ -734,18 +856,18 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 		"ERROR: Type missmatch! Type of the provided pointer is not bitmap but was expected to be of type bitmap!")
 
 size_t* cyx_bitmap_new(size_t size);
-size_t* cyx_bitmap_copy(const size_t* const bitmap);
-int cyx_bitmap_get(const size_t* const bitmap, int pos);
+size_t* cyx_bitmap_copy(const size_t* bitmap);
+int cyx_bitmap_get(const size_t* bitmap, int pos);
 void cyx_bitmap_flip(size_t* bitmap, int pos);
 void cyx_bitmap_set(size_t* bitmap, int pos, int val);
 void cyx_bitmap_free(void* bitmap);
 void cyx_bitmap_print(const void* bitmap);
-size_t* cyx_bitmap_and(const size_t* const bitmap1, const size_t* const bitmap2);
-size_t* cyx_bitmap_and_self(size_t* self, const size_t* const other);
-size_t* cyx_bitmap_or(const size_t* const bitmap1, const size_t* const bitmap2);
-size_t* cyx_bitmap_or_self(size_t* self, const size_t* const other);
-size_t* cyx_bitmap_xor(const size_t* const bitmap1, const size_t* const bitmap2);
-size_t* cyx_bitmap_xor_self(size_t* self, const size_t* const other);
+size_t* cyx_bitmap_and(const size_t* bitmap1, const size_t* bitmap2);
+size_t* cyx_bitmap_and_self(size_t* self, const size_t* other);
+size_t* cyx_bitmap_or(const size_t* bitmap1, const size_t* bitmap2);
+size_t* cyx_bitmap_or_self(size_t* self, const size_t* other);
+size_t* cyx_bitmap_xor(const size_t* bitmap1, const size_t* bitmap2);
+size_t* cyx_bitmap_xor_self(size_t* self, const size_t* other);
 
 #ifdef CYLIBX_STRIP_PREFIX
 
@@ -929,6 +1051,11 @@ int cyx_eq_int32(const void* a, const void* b);
 int cyx_eq_int64(const void* a, const void* b);
 int cyx_eq_str(const void* a, const void* b);
 
+int cyx_cmp_int8(const void* a, const void* b);
+int cyx_cmp_int16(const void* a, const void* b);
+int cyx_cmp_int32(const void* a, const void* b);
+int cyx_cmp_int64(const void* a, const void* b);
+
 #ifdef CYLIBX_STRIP_PREFIX
 
 #define hash_size_t cyx_hash_size_t
@@ -944,6 +1071,11 @@ int cyx_eq_str(const void* a, const void* b);
 #define eq_int32 cyx_eq_int32
 #define eq_int64 cyx_eq_int64
 #define eq_str cyx_eq_str
+
+#define cmp_int8 cyx_cmp_int8
+#define cmp_int16 cyx_cmp_int16
+#define cmp_int32 cyx_cmp_int32
+#define cmp_int64 cyx_cmp_int64
 
 #endif // CYLIBX_STRIP_PREFIX
 
@@ -1006,6 +1138,11 @@ int cyx_eq_str(const void* a, const void* b) {
 	return 1;
 }
 
+int cyx_cmp_int8(const void* a, const void* b) { return *(int8_t*)a < *(int8_t*)b ? -1 : (*(int8_t*)a > *(int8_t*)b ? 1 : 0); }
+int cyx_cmp_int16(const void* a, const void* b) { return *(int16_t*)a < *(int16_t*)b ? -1 : (*(int16_t*)a > *(int16_t*)b ? 1 : 0); }
+int cyx_cmp_int32(const void* a, const void* b) { return *(int32_t*)a < *(int32_t*)b ? -1 : (*(int32_t*)a > *(int32_t*)b ? 1 : 0); }
+int cyx_cmp_int64(const void* a, const void* b) { return *(int64_t*)a < *(int64_t*)b ? -1 : (*(int64_t*)a > *(int64_t*)b ? 1 : 0); }
+
 #endif // CYLIBX_IMPLEMENTATION
 
 #endif // __CYX_CLOSE_FOLD
@@ -1064,6 +1201,7 @@ void __cyx_hashset_remove(void* set, void* val);
 int __cyx_hashset_contains(struct __CyxHashSetContainsParams params);
 void cyx_hashset_free(void* set);
 void cyx_hashset_print(const void* set);
+void cyx_hashset_clear(void* set);
 
 void* __cyx_hashset_union(const void* set1, const void* set2);
 void* __cyx_hashset_union(const void* set1, const void* set2);
@@ -1079,7 +1217,7 @@ void* __cyx_hashset_diff_self(void* self, const void* other);
 	for (typeof(*set)* val = (set); \
 		 __CYX_UNIQUE_VAL__(counter) < __CYX_HASH_SET_GET_HEADER(set)->cap; \
 		 ++__CYX_UNIQUE_VAL__(counter), \
-		 val = (char*)val + __CYX_HASH_SET_GET_HEADER(set)->size) \
+		 val = (void*)((char*)val + __CYX_HASH_SET_GET_HEADER(set)->size)) \
 		if (cyx_bitmap_get(__CYX_HASH_SET_GET_BITMAP(set), 2 * __CYX_UNIQUE_VAL__(counter)) && \
 			!cyx_bitmap_get(__CYX_HASH_SET_GET_BITMAP(set), 2 * __CYX_UNIQUE_VAL__(counter) + 1))
 
@@ -1090,10 +1228,10 @@ void* __cyx_hashset_diff_self(void* self, const void* other);
 	typeof(*set) v = val; \
 	__cyx_hashset_add((void**)&set, &v); \
 } while(0)
-#define cyx_hashset_add_mult_n(set, n, mult) __cyx_hashset_add_mult_n((void**)&(set), n, mult)
+#define cyx_hashset_add_mult_n(set, n, mult) __cyx_hashset_add_mult_n((void**)&(set), n, (void**)mult)
 #define cyx_hashset_add_mult(set, ...) do { \
 	typeof(*set) mult[] = { __VA_ARGS__ };\
-	__cyx_hashset_add_mult_n((void**)&(set), n, mult); \
+	__cyx_hashset_add_mult_n((void**)&(set), sizeof(mult) / sizeof(*mult), (void**)mult); \
 } while (0)
 #define cyx_hashset_remove(set, val) do { \
 	typeof(*set) v = val; \
@@ -1134,6 +1272,7 @@ void* __cyx_hashset_diff_self(void* self, const void* other);
 
 #define hashset_free cyx_hashset_free
 #define hashset_print cyx_hashset_print
+#define hashset_clear cyx_hashset_clear
 
 #endif // CYLIBX_STRIP_PREFIX
 
@@ -1287,11 +1426,10 @@ void __cyx_hashset_add_mult_n(void** set_ptr, size_t n, void** mult) {
 	}
 }
 void __cyx_hashset_remove(void* set, void* val) {
-	assert(set);
-
 	__CYX_HASHSET_TYPECHECK(set);
 	__CyxHashSetHeader* head = __CYX_HASH_SET_GET_HEADER(set);
 	assert(head->hash_fn && "ERROR: No hash function provided to hashset!");
+	if (head->len > 0) { return; }
 
 	size_t* bitmap = __CYX_HASH_SET_GET_BITMAP(set);
 	size_t pos = head->hash_fn(!head->is_ptr ? val : *(void**)val);
@@ -1378,6 +1516,21 @@ void cyx_hashset_print(const void* set) {
 		}
 	}
 	printf(" }");
+}
+void cyx_hashset_clear(void* set) {
+	__CYX_HASHSET_TYPECHECK(set);
+
+	__CyxHashSetHeader* head = __CYX_HASH_SET_GET_HEADER(set);
+	head->len = 0;
+	if (head->defer_fn) {
+		cyx_hashset_foreach(a, set) {
+			head->defer_fn(!head->is_ptr ? a : *(void**)a);
+		}
+	}
+
+	size_t* bitmap = __CYX_HASH_SET_GET_BITMAP(set);
+	size_t bitmap_head = *__CYX_BITMAP_GET_HEADER(bitmap);
+	memset(bitmap, 0, __CYX_BITMAP_CALC_SIZE(bitmap_head) * sizeof(size_t));
 }
 void* __cyx_hashset_union(const void* set1, const void* set2) {
 	__CYX_HASHSET_TYPECHECK(set1);
@@ -1537,7 +1690,7 @@ void cyx_hashmap_print(const void* map);
 	for (typeof(*map)* val = (void*)(map); \
 		__CYX_UNIQUE_VAL__(i) < __CYX_HASHMAP_GET_HEADER(map)->cap; \
 		++__CYX_UNIQUE_VAL__(i), \
-		val = (typeof(*map)*)((char*)val + __CYX_HASHMAP_GET_HEADER(map)->size)) \
+		val = (void*)((char*)val + __CYX_HASHMAP_GET_HEADER(map)->size)) \
 		if (cyx_bitmap_get(__CYX_HASHMAP_GET_BITMAP(map), 2 * __CYX_UNIQUE_VAL__(i)) && \
 			!cyx_bitmap_get(__CYX_HASHMAP_GET_BITMAP(map), 2 * __CYX_UNIQUE_VAL__(i) + 1))
 
@@ -1749,6 +1902,8 @@ void* __cyx_hashmap_get(struct __CyxHashMapFuncParams params) {
 				res = (char*)params.__map + probe * head->size + head->size_key;
 				break;
 			}
+		} else {
+			break;
 		}
 	}
 	if (params.defer && head->defer_key_fn) {

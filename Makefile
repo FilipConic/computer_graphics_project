@@ -4,7 +4,8 @@ FLAGS = -Wall -Wextra -ggdb
 BUILD_DIR = ./build
 TARGET = main
 
-SRCS = main.c
+SRCS_DIR = ./srcs
+SRCS = main.c ttf.c vec2.c ear_clipping.c font.c
 OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)
 
 INC_DIR = ./includes/
@@ -22,7 +23,7 @@ $(BUILD_DIR):
 $(TARGET): $(OBJS)
 	$(CC) $(FLAGS) $^ -o $@ $(FLAGS_EXTRA)
 
-$(BUILD_DIR)/%.o: %.c
+$(BUILD_DIR)/%.o: $(SRCS_DIR)/%.c
 	$(CC) $(FLAGS) -c $< -o $@ $(FLAGS_EXTRA)
 
 clear:
