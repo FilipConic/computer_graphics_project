@@ -8,28 +8,9 @@
 #include <ttf.h>
 #include <cylibx.h>
 
-#define check_shader_compile_status(shader) do { \
-	int success; \
-	glGetShaderiv(shader, GL_COMPILE_STATUS, &success); \
-	if (!success) { \
-		char info_log[512]; \
-		glGetShaderInfoLog(shader, 512, NULL, info_log);\
-		fprintf(stderr, "ERROR:\tUnable to compile shader!\nLOG:\t%s\n", info_log); \
-	} \
-} while(0)
-#define check_program_compile_status(program) do { \
-	int success; \
-	glGetProgramiv(program, GL_COMPILE_STATUS, &success); \
-	if (!success) { \
-		char info_log[512]; \
-		glGetProgramInfoLog(program, 512, NULL, info_log);\
-		fprintf(stderr, "ERROR:\tUnable to compile program!\nLOG:\t%s\n", info_log); \
-	} \
-} while(0)
-
 #define LETTER_COUNT 128
 
-static uint32_t compile_program(const char* vert_file, const char* frag_file) {
+uint32_t compile_program(const char* vert_file, const char* frag_file) {
 	char* source = cyx_str_from_file(vert_file);
 	uint32_t vert_shader = glCreateShader(GL_VERTEX_SHADER);
 	int32_t len = cyx_str_length(source);
@@ -102,9 +83,9 @@ Text __text_create(struct __TextCreateParams params) {
 		.font = params.__font,
 		.screen_width = params.__screen_width,
 		.screen_height = params.__screen_height,
-		.width = params.__width,
-		.height = params.__height,
 
+		.width = params.width,
+		.height = params.height,
 		.pos = (Vec2i){ .x = params.x, .y = params.y },
 		.word_wrapping = params.word_wrapping,
 		.is_static = params.is_static,
@@ -124,6 +105,23 @@ Text __text_create(struct __TextCreateParams params) {
 	}
 
 	return res;
+}
+Vec2i text_cursor_pos(Text* t, Vec2i padding) {
+	Vec2i pos = { 0 };
+	if (!t->last_was_newline) {
+		if (cyx_array_length(t->letters)) {
+			Letter* last = cyx_array_at(t->letters, -1);
+			pos = vec2i_add(padding, vec2i(last->poly.pos.x + last->advance, t->screen_height - last->poly.pos.y - t->row_height));
+			if (t->word_wrapping && pos.x + last->advance >= t->pos.x + t->width) {
+				pos = vec2i_add(padding, vec2i(t->pos.x, t->pos.y + (t->row_count + 1) * t->row_height));
+			}
+		} else {
+			pos = vec2i_add(padding, vec2i(t->pos.x, t->pos.y));
+		}
+	} else {
+		pos = vec2i_add(padding, vec2i(t->pos.x, t->pos.y + t->row_count * t->row_height));
+	}
+	return pos;
 }
 void text_show(Text* s) {
 	for (size_t i = 0, j = 0; i < cyx_array_length(s->letters); ++j) {
@@ -145,7 +143,7 @@ void text_push(Text* s, char c) {
 			if (cyx_array_length(s->letters)) {
 				Letter* last = cyx_array_at(s->letters, -1);
 				new_letter.poly.pos = vec2i(last->poly.pos.x + last->advance, last->poly.pos.y);
-				if (s->word_wrapping && new_letter.poly.pos.x > s->pos.x + s->width) {
+				if (s->word_wrapping && new_letter.poly.pos.x + new_letter.advance >= s->pos.x + s->width) {
 					s->row_count++;
 					new_letter.poly.pos = vec2i(s->pos.x, s->screen_height - s->pos.y - (s->row_count + 1) * s->row_height);
 					new_letter.goes_to_next_row = 1;

@@ -489,7 +489,7 @@ Polygon __turn_glyph_into_polygon(struct __PolygonCreateParams params) {
 void poly_draw(Polygon* poly) {
 	glUseProgram(poly->program);
 
-	int uniform_color = glGetUniformLocation(poly->program, "in_color");
+	int uniform_color = glGetUniformLocation(poly->program, "color");
 	glUniform4f(uniform_color, poly->clr.r / 255.0, poly->clr.g / 255.0, poly->clr.b / 255.0, 1.0);
 
 	int uniform_pos = glGetUniformLocation(poly->program, "screen_pos");

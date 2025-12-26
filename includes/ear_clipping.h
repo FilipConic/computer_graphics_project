@@ -3,18 +3,14 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <vec2.h>
 
 #include <ttf.h>
+#include <vec2.h>
+#include <color.h>
 
 #ifndef BEZIER_STEP
 #define BEZIER_STEP 0.2
 #endif // BEZIER_STEP
-
-typedef struct {
-	uint8_t r, g, b, a;
-} Color;
-#define COLOR_WHITE ((Color){ .r = 255, .g = 255, .b = 255, .a = 255 })
 
 typedef struct {
 	uint32_t vao, vbo, ebo, program;

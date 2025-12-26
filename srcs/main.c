@@ -1,8 +1,8 @@
 #include <context.h>
 
 int main() {
-	// context_setup("./resources/fonts/UbuntuMonoNerdFontMono-Regular.ttf", 20, 0, 100);
-	context_setup("./resources/fonts/JetBrainsMonoNerdFont-Bold.ttf", 20, 0, 100);
+	// context_setup("./resources/fonts/UbuntuMonoNerdFontMono-Regular.ttf", 20);
+	context_setup("./resources/fonts/JetBrainsMonoNerdFont-Bold.ttf", 20);
 
 	// glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 	while (!RGFW_window_shouldClose(context.win)) {

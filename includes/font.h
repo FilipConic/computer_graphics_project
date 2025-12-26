@@ -49,9 +49,9 @@ struct __TextCreateParams {
 	FontTTF* __font;
 	int __screen_width;
 	int __screen_height;
-	int __width;
-	int __height;
 
+	int width;
+	int height;
 	int x;
 	int y;
 	uint8_t word_wrapping;
@@ -59,15 +59,34 @@ struct __TextCreateParams {
 	const char* text;
 };
 
+#define check_shader_compile_status(shader) do { \
+	int success; \
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &success); \
+	if (!success) { \
+		char info_log[512]; \
+		glGetShaderInfoLog(shader, 512, NULL, info_log);\
+		fprintf(stderr, "ERROR:\tUnable to compile shader!\nLOG:\t%s\n", info_log); \
+	} \
+} while(0)
+#define check_program_compile_status(program) do { \
+	int success; \
+	glGetProgramiv(program, GL_COMPILE_STATUS, &success); \
+	if (!success) { \
+		char info_log[512]; \
+		glGetProgramInfoLog(program, 512, NULL, info_log);\
+		fprintf(stderr, "ERROR:\tUnable to compile program!\nLOG:\t%s\n", info_log); \
+	} \
+} while(0)
+uint32_t compile_program(const char* vert_file, const char* frag_file);
+
 Text __text_create(struct __TextCreateParams params);
-#define text_create(font, screen_width, screen_height, width, height, ...) __text_create(((struct __TextCreateParams){ \
+#define text_create(font, screen_width, screen_height, ...) __text_create(((struct __TextCreateParams){ \
 	.__font = (font), \
-	.__screen_height = (screen_height), \
 	.__screen_width = (screen_width), \
-	.__width = (width), \
-	.__height = (height), \
+	.__screen_height = (screen_height), \
 	__VA_ARGS__ \
 }))
+Vec2i text_cursor_pos(Text* t, Vec2i padding);
 void text_show(Text* s);
 void text_push(Text* s, char c);
 void text_pop(Text* s);
