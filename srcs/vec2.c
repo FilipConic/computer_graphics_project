@@ -71,8 +71,24 @@ int vec2i_polygon_collision(Vec2i p, Vec2i* points) {
 		float t = (p.y - a.y) / (float)(b.y - a.y);
 		if (-EPSILON < t && t < 1.0 - EPSILON) {
 			Vec2f intersect = vec2f_add(vec2i_to_vec2f(a), vec2f_mult(vec2i_to_vec2f(vec2i_sub(b, a)), t));
+
 			if (intersect.x > p.x) {
+				if (vec2f_eq(intersect, vec2i_to_vec2f(a))) {
+					Vec2i c = *cyx_array_at(points, (int)i - 1);
+					// printf("c: (%d, %d)\n", c.x, c.y);
+					if (!((c.y <= a.y) ^ (b.y <= a.y))) {
+						continue;
+					}
+				} else if (vec2f_eq(intersect, vec2i_to_vec2f(b))) {
+					Vec2i c = points[(i + 2) % cyx_array_length(points)];
+					// printf("c: (%d, %d)\n", c.x, c.y);
+					if (!((c.y <= b.y) ^ (a.y <= b.y))) {
+						continue;
+					}
+				}
+
 				++sum;
+				// printf("%d: (%d, %d) <- (%d, %d), (%.2f, %.2f) -> (%d, %d)\n", sum, a.x, a.y, p.x, p.y, intersect.x, intersect.y, b.x, b.y);
 			}
 		}
 	}

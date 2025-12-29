@@ -18,9 +18,7 @@
 #include <font.h>
 
 #include <shapes.h>
-
-#define WIDTH 1600
-#define HEIGHT 900
+#include <win_element.h>
 
 struct {
 	double prev_time;
@@ -48,58 +46,18 @@ void updateTimer() {
 	}
 }
 
-typedef enum {
-	BUTTON_PRESS,
-	TEXT_INPUT_CLICKED,
-	FONT_CHANGE_POPUP,
-} CustomEvent;
+void text_in_click_callback(Element* el, void* out) {
+	*(Text**)out = &el->as.text_input.main;
+}
 
-typedef enum {
-	SCENE_ACTIVE_ALWAYS,
-	SCENE_FONT_CHANGE,
-} Scene;
-
-typedef enum {
-	INPUT_NOTHING,
-	INPUT_TEXT_MAIN,
-} InputState;
-
-typedef enum {
-	TEXT_INPUT_ELEMENT,
-	TEXT_ELEMENT,
-	BUTTON_ELEMENT,
-} ElementType;
-
-typedef struct {
-	ElementType type;
-	Scene scene_needed;
-	union {
-		struct {
-			InputState state_needed;
-			int border_width;
-			int x, y, w, h;
-			Color color;
-			Color border_color;
-		} text_input;
-		struct {
-			int x, y;
-			const char* str;
-		} text;
-		struct {
-			int x, y, w, h;
-			const char* str;
-		} button;
-	} as;
-} ElementDescription;
-
-const ElementDescription elements[] = {
+ElementDescription elements[] = {
 	{
 		.type = TEXT_INPUT_ELEMENT,
 		.scene_needed = SCENE_ACTIVE_ALWAYS,
+		.click_callback = text_in_click_callback,
+		.x = 180, .y = 100,
 		.as.text_input = {
-			.x = 180, .y = 100,
 			.w = WIDTH / 2 - 180, .h = HEIGHT - 100,
-			.state_needed = INPUT_TEXT_MAIN, 
 			.color = COLOR_GRAY,
 			.border_width = 5, .border_color = COLOR_WHITE,
 		}
@@ -107,42 +65,31 @@ const ElementDescription elements[] = {
 	{
 		.type = TEXT_ELEMENT,
 		.scene_needed = SCENE_ACTIVE_ALWAYS,
-		.as.text = { .x = 0, .y = 100, .str = "f(x,y)=" }
+		.x = 0, .y = 100, 
+		.as.text = { .str = "f(x,y)=" }
 	},
 	{
 		.type = TEXT_ELEMENT,
 		.scene_needed = SCENE_ACTIVE_ALWAYS,
-		.as.text = { .x = 0, .y = 0, .str = "Hello World!" }
+		.x = 0, .y = 0,
+		.as.text = { .str = "The quick brown fox jumps over the lazy dog?!" }
 	},
 	{
 		.type = TEXT_ELEMENT,
 		.scene_needed = SCENE_FONT_CHANGE,
-		.as.text = { .x = WIDTH / 2, .y = HEIGHT / 2, .str = "Changing font!" }
+		.x = WIDTH / 2, .y = HEIGHT / 2, 
+		.as.text = { .str = "Changing font!" }
 	},
 };
 #define ELEMENT_COUNT (sizeof(elements)/sizeof(*elements))
 
-typedef struct {
-	ElementType type;
-	Scene scene_needed;
-	union {
-		struct {
-			StaticRectangle rect;
-			StaticRectangle cursor;
-			Text main;
-			InputState state_needed;
-		} text_input;
-		Text text;
-		struct {
-			int empty;
-		} button;
-	} as;
-} Element;
-
-const char* programs[] = {
+typedef enum {
+	PRORGAM_STATIC_RECT,
+	PROGRAM_COUNT,
+} ProgramType;
+const char* programs[PROGRAM_COUNT * 2] = {
 	"./resources/shaders/basic.vert", "./resources/shaders/basic.frag",
 };
-#define PROGRAM_COUNT (sizeof(programs)/(2 * sizeof(*programs)))
 
 struct {
 	RGFW_window* win;
@@ -150,91 +97,26 @@ struct {
 	Element elements[ELEMENT_COUNT];
 	Text* curr_text_input;
 
-	InputState input_state;
 	Scene curr_scene;
 
 	uint32_t programs[PROGRAM_COUNT];
 
 	CustomEvent* custom_events_queue;
 	uint8_t ctrl_held;
+
+	uint16_t curr_id;
+	uint16_t curr_z;
+	uint16_t click_field[WIDTH * HEIGHT];
 } context;
 
-void element_parse_rgfw_event(Element* el, RGFW_event* ev) {
-	if (el->type == TEXT_INPUT_ELEMENT && (
-		el->scene_needed == SCENE_ACTIVE_ALWAYS ||
-		el->scene_needed == context.curr_scene) &&
-		el->as.text_input.state_needed == context.input_state) {
-		if (ev->type != RGFW_keyPressed) { return; }
-
-		char c = RGFW_rgfwToKeyChar(ev->key.value);
-		// printf("Keycode: %d\n", event.key.value);
-		if (ev->key.value == 8) {
-			text_pop(&el->as.text_input.main);
-		} else if (ev->key.value == 10) {
-			text_push(&el->as.text_input.main, '\n');
-		} else {
-			if (c != 0) {
-				text_push(&el->as.text_input.main, c);
-			}
-		}
-	}
-}
-#define CURSOR_PADDING vec2i((int)(context.font.size * 0.15), (int)(context.font.size * 0.3))
-void element_show(Element* el) {
-	if (el->scene_needed == context.curr_scene || el->scene_needed == SCENE_ACTIVE_ALWAYS) {
-		switch (el->type) {
-			case TEXT_ELEMENT: text_show(&el->as.text); break;
-			case TEXT_INPUT_ELEMENT: {
-				if (context.input_state == INPUT_TEXT_MAIN) {
-					Vec2i new_cursor_pos = text_cursor_pos(&el->as.text_input.main, CURSOR_PADDING);
-					if (!vec2i_eq(el->as.text_input.cursor.pos, new_cursor_pos)) {
-						s_rect_set_pos(&el->as.text_input.cursor, new_cursor_pos);
-					}
-					s_rect_show(&el->as.text_input.cursor);
-				}
-				s_rect_show(&el->as.text_input.rect);
-				text_show(&el->as.text_input.main);
-			 } break;
-			case BUTTON_ELEMENT:
-			default: assert(0 && "UNREACHABLE");
-		}
-	}
-}
-void element_free(Element* el) {
-	switch (el->type) {
-		case TEXT_ELEMENT:
-			text_free(&el->as.text);
-			break;
-		case TEXT_INPUT_ELEMENT:
-			text_free(&el->as.text_input.main);
-			s_rect_free(&el->as.text_input.rect);
-			s_rect_free(&el->as.text_input.cursor);
-			break;
-		case BUTTON_ELEMENT:
-		default: assert(0 && "UNREACHABLE");
-	}
-}
-void element_parse_mouse(Element* el, Vec2i pos) {
-	if (el->type == TEXT_INPUT_ELEMENT) {
-		Text* text = &el->as.text_input.main;
-		if (text->pos.x < pos.x &&
-			pos.x < text->pos.x + text->width &&
-			text->pos.y < pos.y &&
-			pos.y < text->pos.y + text->height) {
-			cyx_ring_push(context.custom_events_queue, TEXT_INPUT_CLICKED);
-		}
-	}
-}
-
 void key_callback(RGFW_window* win, u8 key, u8 keyChar, RGFW_keymod keyMod, RGFW_bool repeat, RGFW_bool pressed) {
-	RGFW_UNUSED(keyChar);
 	RGFW_UNUSED(repeat);
 
 	if (pressed) {
 		if (key == RGFW_escape) {
 			RGFW_window_setShouldClose(win, 1);
 		} else if (keyMod == RGFW_modControl && keyChar == 'c') {
-			cyx_ring_push(context.custom_events_queue, FONT_CHANGE_POPUP);
+			cyx_ring_push(context.custom_events_queue, event_create(EVENT_SCENE_CHANGE, SCENE_FONT_CHANGE));
 		}
 		if (context.curr_text_input) {
 			if (key == RGFW_backSpace) {
@@ -252,8 +134,11 @@ void mouse_callback(RGFW_window* win, RGFW_mouseButton button, RGFW_bool scrolle
 	Vec2i pos = { 0 };
 	RGFW_window_getMouse(win, &pos.x, &pos.y);
 	if (button == RGFW_mouseLeft) {
-		for (size_t i = 0; i < ELEMENT_COUNT; ++i) {
-			element_parse_mouse(&context.elements[i], pos);
+		uint16_t id = context.click_field[pos.x + pos.y * WIDTH];
+		if (!id) {
+			cyx_ring_push(context.custom_events_queue, event_create(EVENT_CLICK_EMTPY, 0));
+		} else {
+			cyx_ring_push(context.custom_events_queue, event_create(EVENT_ELEMENT_CLICK, id));
 		}
 	}
 }
@@ -264,39 +149,53 @@ void context_setup_programs() {
 		context.programs[i] = compile_program(programs[2 * i], programs[2 * i + 1]);
 	}
 }
+int find_smallest_z(Element* els, uint16_t* ids) {
+	int id = -1;
+	for (size_t i = 0; i < ELEMENT_COUNT; ++i) {
+		if (els[i].click_callback && cyx_array_find(ids, &els[i].id) == -1) {
+			if (id == -1) {
+				id = els[i].id;
+			} else {
+				if (els[id - 1].z > els[i].z) {
+					id = els[i].id;
+				}
+			}
+		}
+	}
+	// printf("{ ");
+	// for (size_t i = 0; i < cyx_array_length(ids); ++i) {
+	// 	if (i) printf(", ");
+	// 	printf("%d", ids[i]);
+	// }
+	// printf("}\n");
+	return id;
+}
 void context_setup_elements() {
 	for (size_t i = 0; i < ELEMENT_COUNT; ++i) {
-		Element* new_element = &context.elements[i];
-		new_element->type = elements[i].type;
-		new_element->scene_needed = elements[i].scene_needed;
-		switch (elements[i].type) {
-			case TEXT_ELEMENT: {
-				new_element->as.text = text_create(&context.font, WIDTH, HEIGHT,
-					.x = elements[i].as.text.x, .y = elements[i].as.text.y, .is_static = 1, .text = elements[i].as.text.str);
-			} break;
-			case TEXT_INPUT_ELEMENT: {
-				new_element->as.text_input.state_needed = elements[i].as.text_input.state_needed;
-				new_element->as.text_input.main = text_create(&context.font, WIDTH, HEIGHT,
-					.width = elements[i].as.text_input.w, .height = elements[i].as.text_input.h,
-					.word_wrapping = 1,
-					.x = elements[i].as.text_input.x + elements[i].as.text_input.border_width,
-					.y = elements[i].as.text_input.y + elements[i].as.text_input.border_width);
-				new_element->as.text_input.rect = s_rect_create(context.programs[0], WIDTH, HEIGHT,
-					elements[i].as.text_input.x,
-					elements[i].as.text_input.y,
-					elements[i].as.text_input.w,
-					elements[i].as.text_input.h,
-					elements[i].as.text_input.color,
-					.border_color = elements[i].as.text_input.border_color,
-					.border_width = elements[i].as.text_input.border_width);
-				new_element->as.text_input.cursor = s_rect_create(context.programs[0], WIDTH, HEIGHT,
-					elements[i].as.text_input.x, elements[i].as.text_input.y,
-					(int)(context.font.size * 0.8), (int)(context.font.size * 2.3),
-					COLOR_WHITE);
-			} break;
-			case BUTTON_ELEMENT: { } break;
-			default: assert(0 && "UNREACHABLE");
+		assert(context.curr_id != UINT16_MAX);
+
+		elements[i].id = ++context.curr_id;
+		if (elements[i].z <= 0) {
+			elements[i].z = ++context.curr_z;
 		}
+
+		if (elements[i].type == TEXT_INPUT_ELEMENT) {
+			elements[i].as.text_input.program = context.programs[PRORGAM_STATIC_RECT];
+			elements[i].as.text_input.font = &context.font;
+		} else if (elements[i].type == TEXT_ELEMENT) {
+			elements[i].as.text_input.font = &context.font;
+		}
+
+		context.elements[i] = element_create(&elements[i]);
+	}
+
+	uint16_t* sorted_z = cyx_array_new(uint16_t, .reserve = ELEMENT_COUNT, .cmp_fn = cyx_cmp_int16);
+	int found = -1;
+	while ((found = find_smallest_z(context.elements, sorted_z)) > 0) {
+		cyx_array_append(sorted_z, found);
+	}
+	for (size_t i = 0; i < cyx_array_length(sorted_z); ++i) {
+		element_fill_click_space(&context.elements[sorted_z[i] - 1], context.click_field);
 	}
 }
 void context_setup(const char* file_path, int size) {
@@ -328,8 +227,8 @@ void context_setup(const char* file_path, int size) {
 	RGFW_setMouseButtonCallback(mouse_callback);
 
 	context.font = font_compile(file_path, size, WIDTH, HEIGHT);
-	context.input_state = INPUT_NOTHING;
 	context.curr_scene = SCENE_ACTIVE_ALWAYS;
+	context.curr_text_input = NULL;
 	context_setup_programs();
 	context_setup_elements();
 	context.custom_events_queue = cyx_ring_new(CustomEvent);
@@ -338,17 +237,17 @@ void context_events() {
 	RGFW_event event;
 	while (RGFW_window_checkEvent(context.win, &event)) {
 		if (event.type == RGFW_quit) { break; }  
-		// for (size_t i = 0; i < ELEMENT_COUNT; ++i) {
-		// 	element_parse_rgfw_event(&context.elements[i], &event);
-		// }
 	}
 
 	cyx_ring_drain(val, context.custom_events_queue) {
-		if (*val == TEXT_INPUT_CLICKED) {
-			context.input_state = INPUT_TEXT_MAIN;
-			context.curr_text_input = &context.elements[0].as.text_input.main;
-		} else if (*val == FONT_CHANGE_POPUP) {
-			context.curr_scene = SCENE_FONT_CHANGE;
+		if (val->type == EVENT_ELEMENT_CLICK) {
+			assert(val->value != 0);
+			Element* el = &context.elements[val->value - 1];
+			el->click_callback(el, &context.curr_text_input);
+		} else if (val->type == EVENT_SCENE_CHANGE) {
+			context.curr_scene = val->value;
+		} else if (val->type == EVENT_CLICK_EMTPY) {
+			context.curr_text_input = NULL;
 		}
 	}
 }
@@ -357,7 +256,7 @@ void context_show() {
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	for (size_t i = 0; i < ELEMENT_COUNT; ++i) {
-		element_show(&context.elements[i]);
+		element_show(&context.elements[i], context.curr_text_input, context.curr_scene);
 	}
 }
 void context_cleanup() {
@@ -374,3 +273,4 @@ void context_cleanup() {
 	font_free(&context.font);
 	RGFW_window_close(context.win);
 }
+

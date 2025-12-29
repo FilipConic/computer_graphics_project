@@ -16,6 +16,29 @@ struct Contour {
 	Contour* holes;
 };
 
+static void dedegen_points(Vec2i* points) {
+repeat1:
+	for (size_t i = 0; i < cyx_array_length(points); ++i) {
+		Vec2i p1 = vec2i_div(points[i], 10);
+		Vec2i p2 = vec2i_div(points[(i + 1) % cyx_array_length(points)], 10);
+		if (vec2i_eq(p1, p2)) {
+			cyx_array_remove(points, i);
+			goto repeat1;
+		}
+	}
+repeat2:
+	for (size_t i = 0; i < cyx_array_length(points); ++i) {
+		Vec2i prev = points[(i + cyx_array_length(points) - 1) % cyx_array_length(points)];
+		Vec2i curr = points[i];
+		Vec2i next = points[(i + 1) % cyx_array_length(points)];
+
+		float angle = vec2i_get_angle(vec2i_sub(prev, curr), vec2i_sub(next, curr));
+		if (fabs(angle - M_PI) < 1e-1) {
+			cyx_array_remove(points, i);
+			goto repeat2;
+		}
+	}
+}
 static int get_winding_order(Vec2i* points) {
 	float sum = 0;
 	for (size_t i = 0; i < cyx_array_length(points); ++i) {
@@ -50,29 +73,6 @@ static int is_polygon_inside_polygon(Vec2i* poly1, Vec2i* poly2) {
 
 	return 1;
 }
-static void dedegen_points(Vec2i* points) {
-repeat1:
-	for (size_t i = 0; i < cyx_array_length(points); ++i) {
-		Vec2i p1 = vec2i_div(points[i], 10);
-		Vec2i p2 = vec2i_div(points[(i + 1) % cyx_array_length(points)], 10);
-		if (vec2i_eq(p1, p2)) {
-			cyx_array_remove(points, i);
-			goto repeat1;
-		}
-	}
-repeat2:
-	for (size_t i = 0; i < cyx_array_length(points); ++i) {
-		Vec2i prev = points[(i + cyx_array_length(points) - 1) % cyx_array_length(points)];
-		Vec2i curr = points[i];
-		Vec2i next = points[(i + 1) % cyx_array_length(points)];
-
-		float angle = vec2i_get_angle(vec2i_sub(prev, curr), vec2i_sub(next, curr));
-		if (fabs(angle - M_PI) < 1e-1) {
-			cyx_array_remove(points, i);
-			goto repeat2;
-		}
-	}
-}
 static uint32_t* ear_clipping(Vec2i* points) {
 	dedegen_points(points);
 	assert(cyx_array_length(points) >= 3);
@@ -106,7 +106,8 @@ static uint32_t* ear_clipping(Vec2i* points) {
 			Vec2i vb = points[b];
 			Vec2i vc = points[c];
 
-			if (vec2i_cross(vec2i_sub(vb, va), vec2i_sub(vc, va)) < 0) { continue; }
+			if (vec2i_cross(vec2i_sub(vb, va), vec2i_sub(vc, va)) <= 0) { continue; }
+			// printf("Area: %d\n", vec2i_cross(vec2i_sub(vb, va), vec2i_sub(vc, va)));
 
 			uint8_t is_ear = 1;
 			for (int j = 0; j < (int)cyx_array_length(points); ++j) {
@@ -130,6 +131,7 @@ static uint32_t* ear_clipping(Vec2i* points) {
 
 			if (is_ear) {
 				// printf("Added: %d, %d, %d\n", b, a, c);
+				// printf("\t[(%d, %d), (%d, %d), (%d, %d)],\n", vb.x, vb.y, va.x, va.y, vc.x, vc.y);
 				cyx_array_append_mult(triangles, b, a, c);
 				cyx_array_remove(indices, i);
 				ear_found = 1;
@@ -157,7 +159,7 @@ static void contour_free(void* val) {
 		cyx_array_free(c->holes);
 	}
 }
-static void contour_add(Contour* arr, Contour in) {
+static int contour_add(Contour* arr, Contour in) {
 	in.type = CONTOUR_INSIDE;
 	for (size_t i = 0; i < cyx_array_length(arr); ++i) {
 		Contour* out = arr + i;
@@ -166,8 +168,10 @@ static void contour_add(Contour* arr, Contour in) {
 				out->holes = cyx_array_new(Contour, .defer_fn = contour_free, .reserve = 2);
 			}
 			cyx_array_append(out->holes, in);
+			return 1;
 		}
 	}
+	return 0;
 }
 
 static Vec2i point_to_vec2i(Point p) {
@@ -207,6 +211,8 @@ static Contour* turn_glyph_into_contours(GlyphData* glyph) {
 	size_t prev = 0;
 	
 	Point* working_points = cyx_array_new(Point);
+	Contour* saved_in = cyx_array_new(Contour, .reserve = 4);
+	int main_winding = 0;
 	for (size_t i = 0; i < cyx_array_length(glyph->contour_end_indicies); ++i) {
 		cyx_array_length(working_points) = 0;
 
@@ -214,13 +220,34 @@ static Contour* turn_glyph_into_contours(GlyphData* glyph) {
 			cyx_array_append(working_points, glyph->points[j]);
 		}
 		Vec2i* points = transform_points_to_vec2i(&working_points);
+		// printf("{ ");
+		// for (size_t j = 0; j < cyx_array_length(points); ++j) {
+		// 	if (j) printf(", ");
+		// 	printf("(%d, %d)", points[j].x, points[j].y);
+		// }
+		// printf(" }\n");
+		if (main_winding == 0) {
+			main_winding = get_winding_order(points);
+		}
 		if (get_winding_order(points) == 1) {
 			cyx_array_append(res, ((Contour){ .points = points, .type = CONTOUR_OUTSIDE }));
 		} else {
-			contour_add(res, (Contour){ .points = points, .type = CONTOUR_INSIDE });
+			if (cyx_array_length(res) == 0) {
+				cyx_array_append(saved_in, ((Contour){ .points = points, .type = CONTOUR_INSIDE }));
+			} else {
+				contour_add(res, (Contour){ .points = points, .type = CONTOUR_INSIDE });
+			}
 		}
 		prev = glyph->contour_end_indicies[i] + 1;
 	}
+	if (cyx_array_length(saved_in) > 0) {
+		for (size_t j = 0; j < cyx_array_length(saved_in); ++j) {
+			if (!contour_add(res, saved_in[j])) {
+				contour_free(saved_in + j);
+			}
+		}
+	}
+	cyx_array_free(saved_in);
 	cyx_array_free(working_points);
 	return res;
 }
@@ -443,6 +470,26 @@ Polygon __turn_glyph_into_polygon(struct __PolygonCreateParams params) {
 	uint32_t program = params.__program;
 
 	Contour* cs = turn_glyph_into_contours(glyph);
+	// for (size_t i = 0; i < cyx_array_length(cs); ++i) {
+	// 	Contour* c = cs + i;
+	// 	if (c->holes) {
+	// 		printf("%zu, %zu: { ", i, cyx_array_length(c->holes));
+	// 		for (size_t j = 0; j < cyx_array_length(c->points); ++j) {
+	// 			Vec2i* v = c->points + j;
+	// 			if (j) printf(", ");
+	// 			printf("(%d, %d)", v->x, v->y);
+	// 		}
+	// 		printf(" }\n");
+	// 	} else {
+	// 		printf("%zu: { ", i);
+	// 		for (size_t j = 0; j < cyx_array_length(c->points); ++j) {
+	// 			Vec2i* v = c->points + j;
+	// 			if (j) printf(", ");
+	// 			printf("(%d, %d)", v->x, v->y);
+	// 		}
+	// 		printf(" }\n");
+	// 	}
+	// }
 
 	TriangleVerticesPair pair = turn_contour_into_triangles(cs);
 	uint32_t* triangles = pair.triangles;

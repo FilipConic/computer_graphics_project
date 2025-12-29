@@ -5,7 +5,7 @@ BUILD_DIR = ./build
 TARGET = main
 
 SRCS_DIR = ./srcs
-SRCS = ttf.c vec2.c ear_clipping.c font.c shapes.c
+SRCS = ttf.c vec2.c ear_clipping.c font.c shapes.c win_element.c
 OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o) $(BUILD_DIR)/main.o
 
 INC_DIR = ./includes/

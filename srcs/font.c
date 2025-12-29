@@ -53,6 +53,7 @@ FontTTF font_compile(const char* font_file_path, int size, int screen_width, int
 		if (!glyph->found) { continue; }
 
 		Letter* curr = font.letters + i;
+		// if (i > 32) printf("%d: '%c'\n", (int)i, (char)i);
 		curr->poly = turn_glyph_into_polygon(glyph, font.program, font.scale,
 					.height = screen_height, .width = screen_width);
 		curr->found = 1;
