@@ -167,7 +167,7 @@ int64_t cyx_str_parse_int(const char* str, size_t from, int* to);
 
 #define cyx_str_from_lit(c_str) cyx_str_from_lit_n(c_str, strlen(c_str))
 #define cyx_str_pop(str) cyx_str_remove(str, -1)
-#define cyx_str_copy(str) (__CYX_STRING_TYPECHECK(str), cyx_str_from_lit_n(str, cyx_str_length(other)))
+#define cyx_str_copy(str) (__CYX_STRING_TYPECHECK(str), cyx_str_from_lit_n(str, cyx_str_length(str)))
 #define cyx_str_append_lit(str, c_str) cyx_str_append_lit_n(str, c_str, strlen(c_str))
 #define cyx_str_append_str(self, other) (__CYX_STRING_TYPECHECK(other), cyx_str_append_lit_n(self, other, cyx_str_length(other)))
 
@@ -224,14 +224,12 @@ void __cyx_str_expand(char** str_ptr, size_t n) {
 	size_t new_cap = head->cap;
 	while (new_cap < head->len + n) { new_cap <<= 1; }
 	if (new_cap == head->cap) { return; }
-	size_t old_len = head->len;
 
 	__CyxStringHeader* new_head = malloc(__CYX_STRING_HEADER_SIZE + __CYX_TYPE_SIZE + new_cap * sizeof(char));
-	memcpy(new_head, head, __CYX_STRING_HEADER_SIZE);
+	memcpy(new_head, head, __CYX_STRING_HEADER_SIZE + __CYX_TYPE_SIZE + head->cap * sizeof(char) );
+	new_head->cap = new_cap;
 	enum __CyxDataType* type = (void*)(new_head + 1);
-	*type = __CYX_TYPE_STRING;
 	char* new_str = (void*)(type + 2);
-	memcpy(new_str, str, old_len * sizeof(char));
 	free(head);
 	*str_ptr = new_str;
 }
@@ -256,12 +254,10 @@ char* cyx_str_append_lit_n(char** str_ptr, const char* c_str, size_t n) {
 
 	__cyx_str_expand(str_ptr, n);
 	char* str = *str_ptr;
-	size_t i = 0;
-	for (; i < n; i += __CYX_BUFFER_SIZE) {
-		memcpy(str + cyx_str_length(str), c_str + i, __CYX_BUFFER_SIZE);
-		cyx_str_length(str) += __CYX_BUFFER_SIZE;
+	__CyxStringHeader* head = __CYX_STRING_GET_HEADER(str);
+	for (size_t i = 0; i < n; ++i) {
+		str[head->len++] = c_str[i];
 	}
-	memcpy(str + cyx_str_length(str),  c_str + i - __CYX_BUFFER_SIZE, i - n);
 	return *str_ptr;
 }
 char* cyx_str_append_char(char** str_ptr, char c) {
@@ -703,6 +699,7 @@ void __cyx_array_sort(void* arr, int start, int end) {
 		}
 		return;
 	}
+
 	void* pivot = (char*)arr + end * head->size;
 	void* a = (char*)arr + (start - 1) * head->size;
 	if (!head->is_ptr) {

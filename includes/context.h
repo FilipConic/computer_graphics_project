@@ -20,31 +20,6 @@
 #include <shapes.h>
 #include <win_element.h>
 
-struct {
-	double prev_time;
-	double collection;
-	double dt;
-
-	size_t frames;
-	char log;
-} timer = { .log = 0 };
-void updateTimer() {
-	struct timespec t;
-	clock_gettime(CLOCK_MONOTONIC, &t);
-	double curr_time = t.tv_sec + t.tv_nsec * 1e-9;
-	timer.dt = curr_time - timer.prev_time;
-	timer.prev_time = curr_time;
-	timer.collection += timer.dt;
-
-	timer.frames++;
-	if (timer.collection > 1.) {
-		if (timer.log) {
-			printf("FPS:\t%zu\n", timer.frames);
-		}
-		timer.frames = 0;
-		timer.collection = 0.0;
-	}
-}
 
 void text_in_click_callback(Element* el, void* out) {
 	*(Text**)out = &el->as.text_input.main;
@@ -76,9 +51,9 @@ ElementDescription elements[] = {
 	},
 	{
 		.type = TEXT_ELEMENT,
-		.scene_needed = SCENE_FONT_CHANGE,
-		.x = WIDTH / 2, .y = HEIGHT / 2, 
-		.as.text = { .str = "Changing font!" }
+		.scene_needed = SCENE_ACTIVE_ALWAYS,
+		.x = WIDTH - 500, .y = HEIGHT - 75, 
+		.as.text = { .str = "Filip Conic, RA126/2022" }
 	},
 };
 #define ELEMENT_COUNT (sizeof(elements)/sizeof(*elements))

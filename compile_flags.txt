@@ -1,2 +1,3 @@
 -I./includes/
 -L./libs/
+-disable-checks=bugprone-sizeof-expression

@@ -109,6 +109,13 @@ int vec2i_edge_edge_collision(Vec2i a, Vec2i b, Vec2i c, Vec2i d) {
 
 	return 0;
 }
+int vec2i_rect_collision(Vec2i p, Vec2i pos, Vec2i wh) {
+	if (pos.x <= p.x && p.x <= pos.x + wh.x &&
+		pos.y <= p.y && p.y <= pos.y + wh.y) {
+		return 1;
+	}
+	return 0;
+}
 
 Vec2f vec2i_lerp(Vec2i a, Vec2i b, float t) {
 	return vec2f_add(vec2i_to_vec2f(a), vec2f_mult(vec2i_to_vec2f(vec2i_sub(b, a)), t));

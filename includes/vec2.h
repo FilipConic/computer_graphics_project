@@ -32,6 +32,7 @@ int vec2i_sign(Vec2i p, Vec2i a, Vec2i b);
 int vec2i_triangle_collision(Vec2i p, Vec2i a, Vec2i b, Vec2i c);
 int vec2i_polygon_collision(Vec2i p, Vec2i* points);
 int vec2i_edge_edge_collision(Vec2i a, Vec2i b, Vec2i c, Vec2i d);
+int vec2i_rect_collision(Vec2i p, Vec2i pos, Vec2i wh);
 
 Vec2f vec2i_lerp(Vec2i a, Vec2i b, float t);
 Vec2f vec2i_bezier_interpolate(Vec2i a, Vec2i b, Vec2i c, float t);

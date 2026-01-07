@@ -31,7 +31,7 @@ struct __PolygonCreateParams {
 };
 Polygon __turn_glyph_into_polygon(struct __PolygonCreateParams params);
 #define turn_glyph_into_polygon(glyph, program, scale, ...) __turn_glyph_into_polygon(((struct __PolygonCreateParams){ .__glyph = (glyph), .__program = program, .__scale = scale, __VA_ARGS__ }))
-void poly_draw(Polygon* poly);
+void poly_show(Polygon* poly);
 void poly_free(Polygon* poly);
 
 #endif // __EAR_CLIPPING_H__

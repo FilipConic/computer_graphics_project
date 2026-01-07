@@ -533,7 +533,7 @@ Polygon __turn_glyph_into_polygon(struct __PolygonCreateParams params) {
 	
 	return poly;
 }
-void poly_draw(Polygon* poly) {
+void poly_show(Polygon* poly) {
 	glUseProgram(poly->program);
 
 	int uniform_color = glGetUniformLocation(poly->program, "color");
