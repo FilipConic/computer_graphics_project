@@ -16,11 +16,6 @@ Similarly use arrow keys and \<C-','\>, \<C-','\> for moving the light around.
 ![application](./resources/images/application.png)
 ![help screen](./resources/images/help.png)
 
-<video width="960" height="540" controls>
-  <source src="./resources/images/graph_calc_video.mp4" type="video/mp4">
-  Your browser does not support the video tag!
-</video>
-
 ## Documentation
 
  - [Learn OpenGL](https://learnopengl.com/Introduction)
