@@ -256,6 +256,8 @@ void __grid_add(struct __GridAddParams params) {
 				showable->as.shape.light_color = params.light_color;
 				showable->as.shape.light_pos = params.light_pos;
 				showable->as.shape.pos = params.world_pos;
+				showable->as.shape.depth_test = params.depth_test;
+				showable->as.shape.face_cull = params.cull_faces;
 			} break;
 			default: assert(0 && "UNREACHABLE");
 		}
@@ -302,8 +304,10 @@ void __grid_add(struct __GridAddParams params) {
 				showable->as.shape.scale = params.scale;
 				showable->as.shape.shininess = params.shininess;
 				showable->as.shape.reflectivity = params.reflectivity;
-				showable->as.shape.face_cull = params.cull_faces;
 				showable->as.shape.pos = params.world_pos;
+
+				showable->as.shape.depth_test = params.depth_test;
+				showable->as.shape.face_cull = params.cull_faces;
 			} break;
 			default: assert(0 && "UNREACHABLE");
 		}

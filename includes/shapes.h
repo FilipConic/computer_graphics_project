@@ -54,6 +54,7 @@ typedef struct {
 	float reflectivity;
 	float shininess;
 	uint8_t face_cull : 1;
+	uint8_t depth_test : 1;
 } Shape3D;
 
 Shape3D shape3d_create(uint32_t program, Color color, float scale, uint32_t* indices, float* triangle_coords);

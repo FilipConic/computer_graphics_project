@@ -122,6 +122,7 @@ void main_setup(Context* ctx) {
 	);
 
 	grid_get_i(ctx, "cull_faces") = 1;
+	grid_get_i(ctx, "depth_test") = 1;
 
 	grid_list_start(ctx, "colors1"); {
 		grid_list_rect(ctx, 0, COLOR_RED, .border_color = COLOR_WHITE, .border_width = 5, .click_func = click_red);
@@ -175,6 +176,7 @@ void main_show(Context* ctx) {
 			grid_get_color(ctx, "light_color"),
 			.padding = 20,
 			.cull_faces = grid_get_i(ctx, "cull_faces"),
+			.depth_test = grid_get_i(ctx, "depth_test"),
 			.shininess = 128,
 			.reflectivity = 1.f,
 		);
@@ -189,6 +191,7 @@ void main_show(Context* ctx) {
 			grid_get_color(ctx, "light_color"),
 			.padding = 20,
 			.cull_faces = grid_get_i(ctx, "cull_faces"),
+			.depth_test = grid_get_i(ctx, "depth_test"),
 			.shininess = 128,
 			.reflectivity = 1.f,
 		);
@@ -204,6 +207,7 @@ void main_show(Context* ctx) {
 				grid_get_color(ctx, "light_color"),
 				.padding = 20,
 				.cull_faces = grid_get_i(ctx, "cull_faces"),
+				.depth_test = grid_get_i(ctx, "depth_test"),
 				.shininess = 128,
 				.reflectivity = 1.0f,
 			);
@@ -234,24 +238,23 @@ void main_show(Context* ctx) {
 								"<C-h>      : Show this 'help' overlay\n"
 								"<C-q>      : Close any overlay or escape the input box\n"
 								"<C-f>      : Turn on/off fullscreen\n"
-								"<C-n>      : Show/Hide author name\n\n"
-								"<C-o>      : Show the 'open file' overlay where you can open a saved\n"
-								"              function\n"
-								"<C-s>      : Show the 'save file' overlay where you can save a function\n"
-								"              you have currently written\n"
+								"<C-n>      : Show/Hide author name\n"
+								"<C-g>      : Turn on/off back face-culling\n"
+								"<C-d>      : Turn on/off depth testing\n"
+								"<C-l>      : Turn on/off FPS cap\n"
+								"<ESC>      : Turn off the application\n\n"
+								"<C-o>      : Show the 'open file' overlay where you can open a saved function\n"
+								"<C-s>      : Show the 'save file' overlay where you can save a function you have\n"
+								"             currently written\n"
 								"<C-i>      : Select the main input box\n"
 								"<C-r>      : Compile the function you've written\n\n"
 								"WASD       : Move the camera around on a sphere\n"
 								"<C-'+'>    : Move the camera closer to the (0, 0)\n"
 								"<C-'-'>    : Move the camera away from (0, 0)\n"
-								"<C-'='>    : Return the camera and the light to the normal viewing\n"
-								"              angle\n\n"
+								"<C-'='>    : Return the camera and the light to the normal viewing angle\n\n"
 								"arrow keys : Move the light around on a sphere\n"
 								"<C-'.'>    : Move the light closer to the (0, 0)\n"
-								"<C-','>    : Move the ligth away from (0, 0)\n\n"
-								"<C-g>      : Turn on/off back face-culling\n"
-								"<C-l>      : Turn on/off FPS cap\n"
-								"<ESC>      : Turn off the application\n",
+								"<C-','>    : Move the ligth away from (0, 0)\n",
 								.padding = 15
 								);
 					} grid_end(ctx);
@@ -389,6 +392,9 @@ void main_key(Context* ctx, char key, int value) {
 	if (!grid_get_i(ctx, "file_overlay_on")) {
 		if (ctx->key_info.ctrl_held) {
 			switch (key) {
+				case 'd': {
+					grid_get_i(ctx, "depth_test") = !grid_get_i(ctx, "depth_test");
+				} break;
 				case 'l': {
 					ctx->timer.fps_cap = !ctx->timer.fps_cap;
 				} break;

@@ -188,6 +188,7 @@ struct __GridAddParams {
 	uint8_t center_y : 1;
 	uint8_t center : 1;
 	uint8_t cull_faces : 1;
+	uint8_t depth_test : 1;
 
 	Color color;
 	Color border_color;

@@ -132,8 +132,12 @@ void shape3d_show(Shape3D* shape, int x, int y, int w, int h, int screen_w, int 
 		glCullFace(GL_BACK);
 		glFrontFace(GL_CCW);
 	}
-
-	glViewport(x, y, w, h);
+	if (shape->depth_test) {
+		glEnable(GL_DEPTH_TEST);
+	} else {
+		glDisable(GL_DEPTH_TEST);
+	}
+glViewport(x, y, w, h);
 	glUseProgram(shape->program);
 
 	int uniform_proj = glGetUniformLocation(shape->program, "u_proj"); 
@@ -172,6 +176,9 @@ void shape3d_show(Shape3D* shape, int x, int y, int w, int h, int screen_w, int 
 	glViewport(0, 0, screen_w, screen_h);
 	if (shape->face_cull) {
 		glDisable(GL_CULL_FACE);
+	}
+	if (shape->depth_test) {
+		glDisable(GL_DEPTH_TEST);
 	}
 }
 void shape3d_free(Shape3D* shape) {
