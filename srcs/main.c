@@ -150,8 +150,8 @@ void main_show(Context* ctx) {
 		} grid_end(ctx);
 
 		grid_start(ctx, 1, GRID_HORIZONTAL, 15, 1, 2, 2); {
-			grid_rect(ctx, 0, "terminal_rect", COLOR_GRAY, .border_color = COLOR_WHITE, .border_width = 10);
-			grid_dyn_text(ctx, 0, "terminal_text", .text_wrap = 1, .padding = 15);
+			grid_rect(ctx, 0, "terminal_rect", COLOR_GRAY, .border_color = COLOR_WHITE, .border_width = 10, .padding = 10);
+			grid_dyn_text(ctx, 0, "terminal_text", .text_wrap = 1, .padding = 25);
 
 			grid_list_show(ctx, grid_get_list(ctx, "colors1"), 2, GRID_VERTICAL, 1, 1, 1, 1, 1);
 			grid_list_show(ctx, grid_get_list(ctx, "colors2"), 3, GRID_VERTICAL, 1, 1, 1, 1, 1);
@@ -457,6 +457,7 @@ void main_key(Context* ctx, char key, int value) {
 				if (ret.ptr) {
 					char* file_path = cyx_str_from_lit(&ctx->temp, "./resources/saved/");
 					cyx_str_append_str(&file_path, ((SceneShowable*)ret.ptr)->as.dyn_text.text);
+					cyx_str_pop(&file_path);
 					cyx_str_append_char(&file_path, '\0');
 					FILE* file = fopen(file_path, "w+");
 					if (!file) {
