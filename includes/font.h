@@ -22,28 +22,9 @@ typedef struct {
 } FontTTF;
 
 FontTTF font_compile(uint32_t program, const char* font_file_path, int size, int screen_width, int screen_height);
-int font_show(FontTTF* font, char c, int x, int y);
+int font_show(FontTTF* font, char c, int x, int y, int screen_w, int screen_h);
 int font_get_advance(FontTTF* font, char c);
+int font_get_text_width(FontTTF* font, size_t n, const char* str);
 void font_free(FontTTF* font);
-
-#define check_shader_compile_status(shader, shader_name) do { \
-	int success; \
-	glGetShaderiv(shader, GL_COMPILE_STATUS, &success); \
-	if (!success) { \
-		char info_log[512]; \
-		glGetShaderInfoLog(shader, 512, NULL, info_log);\
-		fprintf(stderr, "ERROR:\tUnable to compile shader [\"%s\"]!\nLOG:\t%s\n", shader_name, info_log); \
-	} \
-} while(0)
-#define check_program_compile_status(program) do { \
-	int success; \
-	glGetProgramiv(program, GL_COMPILE_STATUS, &success); \
-	if (!success) { \
-		char info_log[512]; \
-		glGetProgramInfoLog(program, 512, NULL, info_log);\
-		fprintf(stderr, "ERROR:\tUnable to compile program!\nLOG:\t%s\n", info_log); \
-	} \
-} while(0)
-uint32_t compile_program(const char* vert_file, const char* frag_file);
 
 #endif // __FONT_H__

@@ -1,14 +1,43 @@
 #ifndef __CYLIBX_H__
 #define __CYLIBX_H__
 
-#include <ctype.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
+// #define CYLIBX_IMPLEMENTATION
+// #define CYLIBX_ALLOC
+
+#if defined(CYLIBX_ALLOC) && defined(CYLIBX_IMPLEMENTATION)
+#define EVOCO_IMPLEMENTATION
+#endif // CYLIBX_ALLOC && CYLIBX_IMPLEMENTATION
+
+#ifdef CYLIBX_ALLOC
+#include <evoco.h>
+#endif // CYLIBX_ALLOC
+
+#if defined(CYLIBX_ALLOC) && defined(CYLIBX_IMPLEMENTATION)
+static EvoAllocator EVO_LIBC_ALLOCATOR = {
+	.ctx = NULL,
+
+	.malloc_f = evo_libc_malloc,
+	.calloc_f = evo_libc_calloc,
+	.realloc_f = evo_libc_realloc,
+	.reallocarray_f = evo_libc_reallocarray,
+	.destroy_f = NULL,
+	.free_f = evo_libc_free,
+	.reset_f = NULL,
+
+	.heap_flag = 0,
+};
+#endif // CYLIBX_ALLOC && CYLIBX_IMPLEMENTATION
+
 #include <assert.h>
-#include <time.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#ifdef CYLIBX_IMPLEMENTATION
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#endif // CYLIBX_IMPLEMENTATION
 
 #define __CYX_CLOSE_FOLD 1
 
@@ -20,67 +49,65 @@
 
 #ifdef CYLIBX_IMPLEMENTATION
 
-#define __CYX_TEMP_BUFFER_SIZE 8192
-static struct {
-	char buffer[__CYX_TEMP_BUFFER_SIZE];
-	char* curr;
-	char* marker;
-} __cyx_temp = { 0 };
-void* __cyx_temp_buffer_alloc(size_t n_bytes);
-#define __cyx_temp_buffer_reset() do { __cyx_temp.curr = __cyx_temp.buffer; } while(0)
-#define __cyx_temp_buffer_marker_set() do { __cyx_temp.marker = __cyx_temp.curr; } while (0)
-#define __cyx_temp_buffer_marker_reset() do { __cyx_temp.curr = __cyx_temp.marker; } while(0)
-
-#define __CYX_DELETED_PTR_COUNT 64
-#define __CYX_DELETED_PTR_SIZE (64 * __CYX_DELETED_PTR_COUNT)
-struct __DeletedFN {
-	void(*defer_fn)(void*);
-	void* byte_pos;
-	char is_ptr;
+#ifndef CYLIBX_ALLOC
+#define __CYX_TEMP_STACK_SIZE 16
+struct __CyxTempStack {
+	void* current;
+	size_t filled;
+	size_t mark;
+	uint8_t buffer[1024 * __CYX_TEMP_STACK_SIZE];
 };
-static struct {
-	struct __DeletedFN fns[__CYX_DELETED_PTR_COUNT];
-	char buffer[__CYX_DELETED_PTR_SIZE];
-	size_t fn_count;
-	size_t buffer_count;
-} __cyx_temp_deleted = { 0 };
-
-void __cyx_temp_reset_deleted();
-void* __cyx_temp_alloc_deleted(size_t bytes, void* val, char is_ptr, void(*fn)(void*));
-void* __cyx_temp_move_deleted(size_t bytes, void* val);
-
-#define __CYX_TEMP_DELETED_FILLED ((size_t)__cyx_temp.curr + 128 > (size_t)__cyx_temp.buffer + __CYX_TEMP_BUFFER_SIZE)
-
-void* __cyx_temp_buffer_alloc(size_t n_bytes) {
-	if (!__cyx_temp.curr) { __cyx_temp.curr = __cyx_temp.buffer; }
-	if (((size_t)__cyx_temp.curr + n_bytes > (size_t)__cyx_temp.buffer + __CYX_TEMP_BUFFER_SIZE)) { return NULL; }
-	void* ret = __cyx_temp.curr;
-	__cyx_temp.curr += n_bytes;
-	return ret;
+static struct __CyxTempStack __cyx_temp_stack = { 0 };
+void __cyx_temp_reset(struct __CyxTempStack* temp) {
+	temp->current = temp->buffer;
+	temp->filled = 0;
 }
-void __cyx_temp_reset_deleted() {
-	if (!__cyx_temp_deleted.buffer_count && !__cyx_temp_deleted.fn_count) { return; }
+void* __cyx_temp_malloc(struct __CyxTempStack* temp, size_t size) {
+	if (!temp->current) { temp->current = temp->buffer; }
 
-	for (size_t i = 0; i < __cyx_temp_deleted.fn_count; ++i) {
-		// struct __DeletedFN* curr = &__cyx_temp_deleted.fns[i];
-		// if (curr->defer_fn) {
-		// 	curr->defer_fn(!curr->is_ptr ? curr->byte_pos : *(void**)(curr->byte_pos));
-		// }
+	size_t capacity = sizeof(temp->buffer) / sizeof(*temp->buffer);
+	size_t aligned = ((size - 1) / sizeof(uintptr_t) + 1) * sizeof(uintptr_t);
+
+	if (temp->filled + aligned > capacity) {
+		if (temp->mark) {
+			__cyx_temp_reset(temp);
+			if (temp->filled + aligned > capacity) {
+				fprintf(stderr, "ERROR:\tYou have set a temporary mark which doesn't allow an allocation to reset the whole temporary stack, but you are trying to allocate an object too big to fit!\n");
+				return NULL;
+			}
+		} else {
+			__cyx_temp_reset(temp);
+		}
 	}
 
-	__cyx_temp_deleted.fn_count = 0;
-	__cyx_temp_deleted.buffer_count = 0;
-}
-void* __cyx_temp_alloc_deleted(size_t bytes, void* val, char is_ptr, void(*fn)(void*)) {
-	if (__cyx_temp_deleted.buffer_count + bytes > __CYX_DELETED_PTR_SIZE || __cyx_temp_deleted.fn_count == __CYX_DELETED_PTR_COUNT) { __cyx_temp_reset_deleted(); }
-	void* ret = (char*)__cyx_temp_deleted.buffer;
-
-	memcpy(ret, val, bytes);
-	__cyx_temp_deleted.buffer_count += bytes;
-	__cyx_temp_deleted.fns[__cyx_temp_deleted.fn_count++] = (struct __DeletedFN){ .defer_fn = fn, .byte_pos = ret, .is_ptr = is_ptr, };
-
+	uint8_t* ret = (uint8_t*)temp->current;
+	temp->current = (char*)temp->current + aligned;
+	temp->filled += aligned;
 	return ret;
 }
+void* __cyx_temp_calloc(void* v, size_t n, size_t size) {
+	void* ret = __cyx_temp_malloc(v, n * size);
+	memset(ret, 0, n * size);
+	return ret;
+}
+void __cyx_temp_set_mark(struct __CyxTempStack* temp) {
+	temp->mark = temp->filled;
+}
+void __cyx_temp_reset_mark(struct __CyxTempStack* temp) {
+	temp->filled = temp->mark;
+	temp->current = (char*)temp->buffer + temp->filled;
+	temp->mark = 0;
+}
+#else
+static EvoTempStack __cyx_temp_stack = { 0 };
+#define __cyx_temp_malloc(temp, size) evo_temp_malloc(temp, size)
+#define __cyx_temp_calloc(temp, size) evo_temp_calloc(temp, size)
+#define __cyx_temp_set_mark(temp) evo_temp_set_mark(temp)
+#define __cyx_temp_reset_mark(temp) evo_temp_reset_mark(temp)
+#define __cyx_temp_reset(temp) evo_temp_reset(temp)
+#endif // CYLIBX_ALLOC
+
+// TODO: add again support for temporary saving of deleted values
 
 #endif // CYLIBX_IMPLEMENTATION
 
@@ -102,7 +129,14 @@ enum __CyxDataType {
 	__CYX_TYPE_STRING,
 	__CYX_TYPE_BITMAP
 };
+
+#define __CYX_GET_TYPE(d) ((enum __CyxDataType*)(d) - 2) 
 #define __CYX_TYPE_SIZE (sizeof(enum __CyxDataType) * 2)
+#define __CYX_CONCAT_VALS_BASE__(a, b) a##b
+#define __CYX_CONCAT_VALS__(a, b) __CYX_CONCAT_VALS_BASE__(a, b)
+#define __CYX_UNIQUE_VAL__(a) __CYX_CONCAT_VALS__(a, __LINE__)
+
+#ifdef CYLIBX_IMPLEMENTATION
 
 #define __CYX_DATA_GET_AT(header, data_ptr, pos) ((char*)(data_ptr) + (pos) * (header)->size)
 #define __CYX_PTR_CMP(header, l, r) (!(header)->is_ptr ? (header)->cmp_fn(l, r) : (header)->cmp_fn(*(void**)(l), *(void**)(r)))
@@ -111,18 +145,16 @@ enum __CyxDataType {
 	(header)->cmp_fn(*(void**)(__CYX_DATA_GET_AT(header, data_ptr, l_pos)), *(void**)(__CYX_DATA_GET_AT(header, data_ptr, r_pos))) \
 )
 #define __CYX_SWAP(a, b, size) do { \
-	__cyx_temp_buffer_marker_set(); \
-		void* temp = __cyx_temp_buffer_alloc(size); \
+	__cyx_temp_set_mark(&__cyx_temp_stack); { \
+		void* temp = __cyx_temp_malloc(&__cyx_temp_stack, size); \
 		assert(temp && "ERROR: Can not allocate to the temporary buffer anymore!"); \
 		memcpy(temp, a, size); \
 		memcpy(a, b, size); \
 		memcpy(b, temp, size); \
-	__cyx_temp_buffer_marker_reset(); \
+	} __cyx_temp_reset_mark(&__cyx_temp_stack); \
 } while(0);
-#define __CYX_CONCAT_VALS_BASE__(a, b) a##b
-#define __CYX_CONCAT_VALS__(a, b) __CYX_CONCAT_VALS_BASE__(a, b)
-#define __CYX_UNIQUE_VAL__(a) __CYX_CONCAT_VALS__(a, __LINE__)
-#define __CYX_GET_TYPE(d) ((enum __CyxDataType*)(d) - 2) 
+
+#endif // CYLIBX_IMPLEMENTATION
 
 #endif // __CYX_CLOSE_FOLD
 
@@ -135,6 +167,9 @@ enum __CyxDataType {
 typedef struct {
 	size_t len;
 	size_t cap;
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* alloc;
+#endif // CYLIBX_ALLOC
 } __CyxStringHeader;
 
 #ifndef CYX_STRING_BASE_SIZE
@@ -146,30 +181,49 @@ typedef struct {
 #define __CYX_STRING_TYPECHECK(str) assert(*__CYX_GET_TYPE(str) == __CYX_TYPE_STRING && \
 		"ERROR: Type missmatch! Type of the provided pointer is not string but was expected to be of type string!")
 
+#ifndef CYLIBX_ALLOC
 char* cyx_str_new();
 char* cyx_str_from_lit_n(const char* c_str, size_t n);
 char* cyx_str_from_file(const char* file_path);
+#else
+char* cyx_str_new(EvoAllocator* allocator);
+char* cyx_str_from_lit_n(EvoAllocator* allocator, const char* c_str, size_t n);
+char* cyx_str_from_file(EvoAllocator* allocator, const char* file_path);
+#endif // CYLIBX_ALLOC
 char* cyx_str_append_char(char** str, char c);
+char* cyx_str_insert_char(char** str, char c, int pos);
 char* cyx_str_append_lit_n(char** str, const char* c_str, size_t n);
 char* cyx_str_append_file(char** str, const char* file_path);
-void cyx_str_remove(char* str, int pos);
-void cyx_str_free(void* str);
-void cyx_str_print(const void* str);
-int cyx_str_eq(const void* val1, const void* val2);
-int cyx_str_cmp(const void* val1, const void* val2);
+char* cyx_str_append_uint(char** str, uint64_t n);
+void cyx_str_remove(char** str, int pos);
+void cyx_str_replace(char* str, char to_replace, char c);
 size_t cyx_str_count_char(char* str, char c);
 uint64_t cyx_str_parse_uint(const char* str, size_t from, int* to);
 int64_t cyx_str_parse_int(const char* str, size_t from, int* to);
+void cyx_str_free(void* str);
+void cyx_str_clear(char* str);
+void cyx_str_print(const void* str);
+int cyx_str_eq(const void* val1, const void* val2);
+int cyx_str_cmp(const void* val1, const void* val2);
 
 #define cyx_str_length(str) (__CYX_STRING_GET_HEADER(str)->len)
 #define CYX_STR_FMT "%.*s"
 #define CYX_STR_UNPACK(str) (int)cyx_str_length(str), str
 
-#define cyx_str_from_lit(c_str) cyx_str_from_lit_n(c_str, strlen(c_str))
-#define cyx_str_pop(str) cyx_str_remove(str, -1)
-#define cyx_str_copy(str) (__CYX_STRING_TYPECHECK(str), cyx_str_from_lit_n(str, cyx_str_length(str)))
-#define cyx_str_append_lit(str, c_str) cyx_str_append_lit_n(str, c_str, strlen(c_str))
-#define cyx_str_append_str(self, other) (__CYX_STRING_TYPECHECK(other), cyx_str_append_lit_n(self, other, cyx_str_length(other)))
+#ifndef CYLIBX_ALLOC // str_from_lit
+#define cyx_str_from_lit(c_str) (cyx_str_from_lit_n(c_str, strlen(c_str)))
+#else 
+#define cyx_str_from_lit(allocator, c_str) (cyx_str_from_lit_n(allocator, c_str, strlen(c_str)))
+#endif // CYLIBX_ALLOC
+#ifndef CYLIBX_ALLOC // str_copy()
+#define cyx_str_copy(str) (__CYX_STRING_TYPECHECK(str), cyx_str_from_lit_n(str, cyx_str_length(other)))
+#else 
+#define cyx_str_copy(str) (__CYX_STRING_TYPECHECK(str), cyx_str_from_lit_n(__CYX_STRING_GET_HEADER(str)->alloc, str, cyx_str_length(str)))
+#define cyx_str_copy_a(allocator, str) (__CYX_STRING_TYPECHECK(str), cyx_str_from_lit_n((allocator), str, cyx_str_length(str)))
+#endif // CYLIBX_ALLOC
+#define cyx_str_append_lit(str, c_str) (cyx_str_append_lit_n(str, c_str, strlen(c_str)))
+#define cyx_str_append_str(self, other) (__CYX_STRING_TYPECHECK(other), (cyx_str_append_lit_n(self, other, cyx_str_length(other))))
+#define cyx_str_pop(str) (cyx_str_remove(str, -1))
 
 #ifdef CYLIBX_STRIP_PREFIX
 
@@ -177,26 +231,34 @@ int64_t cyx_str_parse_int(const char* str, size_t from, int* to);
 #define STR_UNPACK(str) CYX_STR_UNPACK(str)
 
 #define str_length(str) cyx_str_length(str)
+#ifndef CYLIBX_ALLOC
 #define str_from_lit(c_str) cyx_str_from_lit(c_str)
-#define str_pop(str) cyx_str_remove(str, -1)
+#else
+#define str_from_lit(allocator, c_str) cyx_str_from_lit(allocator, c_str)
+#endif // CYLIBX_ALLOC
 #define str_copy(str) cyx_str_copy(str)
 #define str_append_lit(str, c_str) cyx_str_append_lit(str, c_str)
 #define str_append_str(self, other) cyx_str_append_str(self, other)
+#define str_pop(str) cyx_str_remove(str, -1)
 
 #define str_new cyx_str_new
 #define str_from_lit_n cyx_str_from_lit_n
 #define str_from_file cyx_str_from_file
 #define str_append_char cyx_str_append_char
+#define str_insert_char cyx_str_insert_char
 #define str_append_lit_n cyx_str_append_lit_n
 #define str_append_file cyx_str_append_file
-#define str_remove cyx_str_remove
-#define str_free cyx_str_free
-#define str_print cyx_str_print
-#define str_eq cyx_str_eq
-#define str_cmp cyx_str_cmp
+#define str_append_uint cyx_str_append_uint
 #define str_count_char cyx_str_count_char
 #define str_parse_uint cyx_str_parse_uint
 #define str_parse_int cyx_str_parse_int
+#define str_replace cyx_str_replace
+#define str_remove cyx_str_remove
+#define str_free cyx_str_free
+#define str_clear cyx_str_clear
+#define str_print cyx_str_print
+#define str_eq cyx_str_eq
+#define str_cmp cyx_str_cmp
 
 #endif // CYLIBX_STRIP_PREFIX
 
@@ -204,6 +266,7 @@ int64_t cyx_str_parse_int(const char* str, size_t from, int* to);
 
 #define __CYX_BUFFER_SIZE 256
 
+#ifndef CYLIBX_ALLOC // str_new, str_expand, str_from_lit_n, str_from_file
 char* cyx_str_new() {
 	__CyxStringHeader* head = malloc(__CYX_STRING_HEADER_SIZE + __CYX_TYPE_SIZE + CYX_STRING_BASE_SIZE * sizeof(char));
 	if (!head) { return NULL; }
@@ -249,17 +312,57 @@ char* cyx_str_from_file(const char* file_path) {
 	char* res = cyx_str_new();
 	return cyx_str_append_file(&res, file_path);
 }
-char* cyx_str_append_lit_n(char** str_ptr, const char* c_str, size_t n) {
-	__CYX_STRING_TYPECHECK(*str_ptr);
+#else
+char* cyx_str_new(EvoAllocator* allocator) {
+	if (!allocator) { allocator = &EVO_LIBC_ALLOCATOR; }
+	__CyxStringHeader* head = evo_alloc_malloc(allocator, __CYX_STRING_HEADER_SIZE + __CYX_TYPE_SIZE + CYX_STRING_BASE_SIZE * sizeof(char));
+	if (!head) { return NULL; }
 
-	__cyx_str_expand(str_ptr, n);
+	memset(head, 0, __CYX_STRING_HEADER_SIZE + __CYX_TYPE_SIZE + CYX_STRING_BASE_SIZE * sizeof(char));
+	head->cap = CYX_STRING_BASE_SIZE;
+	head->alloc = allocator;
+
+	enum __CyxDataType* type = (enum __CyxDataType*)(head + 1);
+	*type = __CYX_TYPE_STRING;
+	char* str = (char*)(type + 2);
+
+	return str;
+}
+void __cyx_str_expand(char** str_ptr, size_t n) {
 	char* str = *str_ptr;
 	__CyxStringHeader* head = __CYX_STRING_GET_HEADER(str);
-	for (size_t i = 0; i < n; ++i) {
-		str[head->len++] = c_str[i];
-	}
-	return *str_ptr;
+
+	size_t new_cap = head->cap;
+	while (new_cap < head->len + n) { new_cap <<= 1; }
+	if (new_cap == head->cap) { return; }
+
+	__CyxStringHeader* new_head = evo_alloc_malloc(head->alloc, __CYX_STRING_HEADER_SIZE + __CYX_TYPE_SIZE + new_cap * sizeof(char));
+	memcpy(new_head, head, __CYX_STRING_HEADER_SIZE + __CYX_TYPE_SIZE + head->cap * sizeof(char) );
+	new_head->cap = new_cap;
+	enum __CyxDataType* type = (void*)(new_head + 1);
+	char* new_str = (void*)(type + 2);
+	if (new_head->alloc->free_f) { evo_alloc_free(new_head->alloc, head); }
+	*str_ptr = new_str;
 }
+char* cyx_str_from_lit_n(EvoAllocator* allocator, const char* c_str, size_t n) {
+	if (!allocator) { allocator = &EVO_LIBC_ALLOCATOR; }
+	__CyxStringHeader* head = evo_alloc_malloc(allocator, __CYX_STRING_HEADER_SIZE + __CYX_TYPE_SIZE + n * sizeof(char));
+	if (!head) { return NULL; }
+	head->alloc = allocator;
+	head->cap = n;
+	head->len = n;
+
+	enum __CyxDataType* type = (void*)(head + 1);
+	*type = __CYX_TYPE_STRING;
+	memcpy(type + 2, c_str, n * sizeof(char));
+	
+	return (char*)(type + 2);
+}
+char* cyx_str_from_file(EvoAllocator* allocator, const char* file_path) {
+	char* res = cyx_str_new(allocator);
+	return cyx_str_append_file(&res, file_path);
+}
+#endif // CYLIBX_ALLOC
 char* cyx_str_append_char(char** str_ptr, char c) {
 	__CYX_STRING_TYPECHECK(*str_ptr);
 
@@ -267,6 +370,33 @@ char* cyx_str_append_char(char** str_ptr, char c) {
 	char* str = *str_ptr;
 	__CyxStringHeader* head = __CYX_STRING_GET_HEADER(str);
 	str[head->len++] = c;
+
+	return *str_ptr;
+}
+char* cyx_str_insert_char(char** str_ptr, char c, int pos) {
+	__CYX_STRING_TYPECHECK(*str_ptr);
+
+	__cyx_str_expand(str_ptr, 1);
+	char* str = *str_ptr;
+	__CyxStringHeader* head = __CYX_STRING_GET_HEADER(str);
+
+	if (pos < 0) { pos += head->len; }
+	assert(pos < (int)head->len);
+
+	memmove(str + pos + 1, str + pos, head->len - pos);
+	str[pos] = c;
+	++head->len;
+
+	return *str_ptr;
+}
+char* cyx_str_append_lit_n(char** str_ptr, const char* c_str, size_t n) {
+	__CYX_STRING_TYPECHECK(*str_ptr);
+
+	__cyx_str_expand(str_ptr, n);
+	char* str = *str_ptr;
+	for (size_t i = 0; i < n; ++i) {
+		str[cyx_str_length(str)++] = c_str[i];
+	}
 	return *str_ptr;
 }
 char* cyx_str_append_file(char** str_ptr, const char* file_path) {
@@ -290,19 +420,58 @@ char* cyx_str_append_file(char** str_ptr, const char* file_path) {
 
 	return *str_ptr;
 }
-void cyx_str_remove(char* str, int pos) {
+char* cyx_str_append_uint(char** str_ptr, uint64_t n) {
+	__CYX_STRING_TYPECHECK(*str_ptr);
+
+	int n_len = n ? (int)log10(n) + 1 : 1;
+	char buffer[24] = { 0 };
+	for (int i = 0; i < n_len; ++i) {
+		char c = (n % 10) + '0';
+		n /= 10;
+		buffer[n_len - i - 1] = c;
+	}
+	cyx_str_append_lit_n(str_ptr, buffer, n_len);
+
+	return *str_ptr;
+}
+void cyx_str_remove(char** str_ptr, int pos) {
+	char* str = *str_ptr;
 	__CYX_STRING_TYPECHECK(str);
 
 	__CyxStringHeader* head = __CYX_STRING_GET_HEADER(str);
-
 	if (pos < 0) { pos += head->len; }
 	assert(pos < (int)head->len);
-	memmove(str + pos, str + pos + 1, (head->len - pos) * sizeof(char));
-	head->len--;
+	if (pos + 1 != (int)head->len) {
+		memmove(str + pos, str + pos + 1, head->len - pos);
+	}
+
+	--head->len;
+}
+void cyx_str_replace(char* str, char to_replace, char c) {
+	__CYX_STRING_TYPECHECK(str);
+	if (c == to_replace) { return; }
+	
+	__CyxStringHeader* head = __CYX_STRING_GET_HEADER(str);
+	for (size_t i = 0; i < head->len; ++i) {
+		if (str[i] == to_replace) { str[i] = c; }
+	}
 }
 void cyx_str_free(void* str) {
 	__CYX_STRING_TYPECHECK(str);
-	free(__CYX_STRING_GET_HEADER((void*)str));
+	__CyxStringHeader* head = __CYX_STRING_GET_HEADER((void*)str);
+#ifndef CYLIBX_ALLOC
+	free(head);
+#else
+	if (head->alloc->free_f) {
+		free(head);
+	} else {
+		fprintf(stderr, "ERROR:\tThe allocator you've provided to the string doesn't free single elements as you expected!\n");
+	}
+#endif // CYLIBX_ALLOC
+}
+void cyx_str_clear(char* str) {
+	__CYX_STRING_TYPECHECK(str);
+	cyx_str_length(str) = 0;
 }
 void cyx_str_print(const void* str) {
 	__CYX_STRING_TYPECHECK(str);
@@ -331,6 +500,7 @@ int cyx_str_cmp(const void* val1, const void* val2) {
 	else if (ret > 0) return 1;
 	else return 0;
 }
+
 size_t cyx_str_count_char(char* str, char c) {
 	size_t sum = 0;
 	for (size_t i = 0; i < cyx_str_length(str); ++i) {
@@ -342,36 +512,31 @@ uint64_t cyx_str_parse_uint(const char* str, size_t from, int* to) {
 	if (from >= cyx_str_length(str)) { return 0; }
 	size_t till = (!to || *to <= (int)from || *to >= (int)cyx_str_length(str) ? cyx_str_length(str) : (size_t)*to);
 	size_t i = from;
-
 	char buffer[21] = { 0 };
 	short count = 0;
 	for (; i < till; ++i) {
-		if (isdigit(str[i])) {
+		if ('0' <= str[i] && str[i] <= '9') {
 			buffer[count++] = str[i];
 		} else { break; }
-
 		if (count == 21) { break; }
 	}
 	if (to) { *to = i; }
-
 	buffer[count] = '\0';
 	return atol(buffer);
 }
 int64_t cyx_str_parse_int(const char* str, size_t from, int* to) {
 	if (from >= cyx_str_length(str)) { return 0; }
 	size_t till = (!to || *to <= (int)from || *to >= (int)cyx_str_length(str) ? cyx_str_length(str) : (size_t)*to);
-
 	size_t i = from;
 	char is_neg = 0;
 	if (str[i] == '-') {
 		is_neg = 1;
 		++i;
 	}
-
 	char buffer[21] = { 0 };
 	short count = 0;
 	for (; i < till; ++i) {
-		if (isdigit(str[i])) {
+		if ('0' <= str[i] && str[i] <= '9') {
 			buffer[count++] = str[i];
 		} else { break; }
 
@@ -379,7 +544,6 @@ int64_t cyx_str_parse_int(const char* str, size_t from, int* to) {
 	}
 	if (to) { *to = i; }
 	if (!count) { return 0; }
-
 	buffer[count] = '\0';
 	return !is_neg ? atol(buffer) : -atol(buffer);
 }
@@ -403,10 +567,17 @@ typedef struct {
 	int (*cmp_fn)(const void*, const void*);
 	void (*print_fn)(const void*);
 
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* alloc;
+#endif // CYLIBX_ALLOC
+
 	char is_ptr;
 } __CyxArrayHeader;
 
 struct __CyxArrayParams {
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* __allocator;
+#endif // CYLIBX_ALLOC
 	size_t __size;
 	size_t reserve;
 	char is_ptr;
@@ -417,7 +588,7 @@ struct __CyxArrayParams {
 };
 
 #ifndef CYX_ARRAY_BASE_SIZE
-#define CYX_ARRAY_BASE_SIZE 16
+#define CYX_ARRAY_BASE_SIZE 32
 #endif // CYX_ARRAY_BASE_SIZE
 
 #define __CYX_ARRAY_HEADER_SIZE (sizeof(__CyxArrayHeader))
@@ -429,15 +600,15 @@ void* __cyx_array_new(struct __CyxArrayParams params);
 void* __cyx_array_copy(void* arr);
 void __cyx_array_expand(void** arr_ptr, size_t n);
 void __cyx_array_append(void** arr, void* val);
-void __cyx_array_append_mult_n(void** arr_ptr, size_t n, const void* mult);
 void __cyx_array_insert(void** arr, void* val, int pos);
 void* __cyx_array_remove(void* arr, int pos);
 void* __cyx_array_at(void* arr, int pos);
+void cyx_array_reverse(void* arr);
 void cyx_array_free(void* arr);
+void __cyx_array_append_mult_n(void** arr_ptr, size_t n, const void* mult);
 void cyx_array_print(const void* arr);
 void cyx_array_clear(void* arr);
 
-void cyx_array_reverse(void* arr);
 void __cyx_array_sort(void* arr, int start, int end);
 void* __cyx_array_map(const void* arr, void (*fn)(void*, const void*));
 void* cyx_array_map_self(void* arr, void (*fn)(void*, const void*));
@@ -455,14 +626,18 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 #define cyx_array_drain(val, arr) __CYX_ARRAY_TYPECHECK(arr); \
 	for (typeof(*arr)* val = NULL; (val = array_pop(arr));)
 
-#define __cyx_array_new_params(...) __cyx_array_new((struct __CyxArrayParams){ __VA_ARGS__ })
-#define cyx_array_new(T, ...) (T*)__cyx_array_new_params(.__size = sizeof(T), __VA_ARGS__)
-#define cyx_array_copy(arr) (typeof(*arr)*)__cyx_array_copy(arr)
+#define __cyx_array_new_params(...) (__cyx_array_new((struct __CyxArrayParams){ __VA_ARGS__ }))
+#ifndef CYLIBX_ALLOC // array_new()
+#define cyx_array_new(T, ...) ((T*)__cyx_array_new_params(.__size = sizeof(T), __VA_ARGS__))
+#else
+#define cyx_array_new(T, allocator, ...) ((T*)__cyx_array_new_params(.__size = sizeof(T), .__allocator = (allocator), __VA_ARGS__))
+#endif // CYLIBX_ALLOC
+#define cyx_array_copy(arr) ((typeof(*arr)*)__cyx_array_copy(arr))
 #define cyx_array_append(arr, val) do { \
 	typeof(*arr) v = (val); \
 	__cyx_array_append((void**)&(arr), &v); \
 } while(0)
-#define cyx_array_append_mult_n(arr, n, mult) __cyx_array_append_mult_n((void**)&(arr), n, mult)
+#define cyx_array_append_mult_n(arr, n, mult) (__cyx_array_append_mult_n((void**)&(arr), n, mult))
 #define cyx_array_append_mult(arr, ...) do { \
 	typeof(*arr) mult[] = { __VA_ARGS__ }; \
 	__cyx_array_append_mult_n((void**)&(arr), sizeof(mult)/sizeof(*(mult)), mult); \
@@ -471,9 +646,10 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 	typeof(*arr) v = (val); \
 	__cyx_array_insert((void**)&(arr), &v, pos); \
 } while(0)
-#define cyx_array_remove(arr, pos) (typeof(*arr)*)__cyx_array_remove(arr, pos)
-#define cyx_array_pop(arr) (typeof(*arr)*)__cyx_array_remove(arr, -1)
-#define cyx_array_at(arr, pos) (typeof(*arr)*)__cyx_array_at(arr, pos)
+#define cyx_array_remove(arr, pos) ((typeof(*arr)*)__cyx_array_remove(arr, pos))
+#define cyx_array_pop(arr) ((typeof(*arr)*)__cyx_array_remove(arr, -1))
+#define cyx_array_at(arr, pos) ((typeof(*arr)*)__cyx_array_at(arr, pos))
+#define cyx_array_top(arr) ((typeof(*arr)*)__cyx_array_at(arr, -1))
 #define cyx_array_set_cmp(arr, cmp) do { __CYX_ARRAY_GET_HEADER(arr)->cmp_fn = cmp; } while(0)
 #define cyx_array_sort(arr) do { \
 	assert(arr); \
@@ -493,14 +669,18 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 #define array_foreach(val, arr) cyx_array_foreach(val, arr)
 #define array_drain(val, arr) cyx_array_drain(val, arr)
 
+#ifndef CYLIBX_ALLOC
 #define array_new(T, ...) cyx_array_new(T, __VA_ARGS__) 
+#else
+#define array_new(T, allocator, ...) cyx_array_new(T, allocator, __VA_ARGS__) 
+#endif // CYLIBX_ALLOC 
 #define array_copy(arr) cyx_array_copy(arr)
 #define array_append(arr, val) cyx_array_append(arr, val)
 #define array_append_mult_n(arr, n, mult) cyx_array_append_mult_n(arr, n, mult)
 #define array_append_mult(arr, ...) cyx_array_append_mult(arr, __VA_ARGS__)
-#define array_insert(arr, val, pos) cyx_array_insert(arr, val, pos)
 #define array_remove(arr, pos) cyx_array_remove(arr, pos)
 #define array_pop(arr) cyx_array_pop(arr)
+#define array_insert(arr, val, pos) cyx_array_insert(arr, val, pos)
 #define array_at(arr, pos) cyx_array_at(arr, pos)
 #define array_set_cmp(arr, cmp) cyx_array_set_cmp(arr, cmp)
 #define array_sort(arr) cyx_array_sort(arr)
@@ -508,10 +688,10 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 #define array_filter(arr, fn) cyx_array_filter(arr, fn)
 #define array_fold(arr, accumulator, fn) cyx_array_fold(arr, accumulator, fn)
 
+#define array_reverse cyx_array_reverse
 #define array_free cyx_array_free
 #define array_print cyx_array_print
 #define array_clear cyx_array_clear
-#define array_reverse cyx_array_reverse
 #define array_map_self cyx_array_map_self
 #define array_filter_self cyx_array_filter_self
 #define array_find cyx_array_find
@@ -521,6 +701,7 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 
 #ifdef CYLIBX_IMPLEMENTATION
 
+#ifndef CYLIBX_ALLOC // __cyx_array_new()
 void* __cyx_array_new(struct __CyxArrayParams params) {
 	__CyxArrayHeader* head;
 	if (!params.reserve) {
@@ -567,9 +748,66 @@ void __cyx_array_expand(void** arr_ptr, size_t n) {
 	enum __CyxDataType* type = (void*)(new_head + 1);
 	*type = __CYX_TYPE_ARRAY;
 
+
 	free(head);
 	*arr_ptr = (void*)(type + 2);
 }
+#else
+void* __cyx_array_new(struct __CyxArrayParams params) {
+	if (!params.__allocator) { params.__allocator = &EVO_LIBC_ALLOCATOR; }
+
+	__CyxArrayHeader* head;
+	if (!params.reserve) {
+		head = evo_alloc_malloc(params.__allocator, __CYX_ARRAY_HEADER_SIZE + __CYX_TYPE_SIZE + CYX_ARRAY_BASE_SIZE * params.__size);
+		if (!head) { return NULL; }
+		head->cap = CYX_ARRAY_BASE_SIZE;
+	} else {
+		head = evo_alloc_malloc(params.__allocator, __CYX_ARRAY_HEADER_SIZE + __CYX_TYPE_SIZE + params.reserve * params.__size);
+		if (!head) { return NULL; }
+		head->cap = params.reserve;
+	}
+	head->size = params.__size;
+	head->len = 0;
+	head->is_ptr = params.is_ptr;
+	head->print_fn = params.print_fn;
+	head->cmp_fn = params.cmp_fn;
+	head->defer_fn = params.defer_fn;
+	head->alloc = params.__allocator;
+
+	enum __CyxDataType* type = (void*)(head + 1);
+	*type = __CYX_TYPE_ARRAY;
+	return (void*)(type + 2);
+}
+void* __cyx_array_copy(void* arr) {
+	__CYX_ARRAY_TYPECHECK(arr);
+	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
+
+	__CyxArrayHeader* res_head = malloc(__CYX_ARRAY_HEADER_SIZE + __CYX_TYPE_SIZE + head->cap * head->size);
+	if (!res_head) { return NULL; }
+	memcpy(res_head, head, __CYX_ARRAY_HEADER_SIZE + __CYX_TYPE_SIZE + head->cap * head->size);
+
+	enum __CyxDataType* type = (void*)(res_head + 1);
+	*type = __CYX_TYPE_ARRAY;
+	return (void*)(type + 2);
+}
+void __cyx_array_expand(void** arr_ptr, size_t n) {
+	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(*arr_ptr);
+	size_t new_cap = head->cap;
+
+	while (n + head->len > (new_cap <<= 1));
+	__CyxArrayHeader* new_head = evo_alloc_malloc(head->alloc, __CYX_ARRAY_HEADER_SIZE + __CYX_TYPE_SIZE + new_cap * head->size);
+	memcpy(new_head, head, __CYX_ARRAY_HEADER_SIZE + __CYX_TYPE_SIZE + head->cap * head->size);
+	new_head->cap = new_cap;
+
+	enum __CyxDataType* type = (void*)(new_head + 1);
+	*type = __CYX_TYPE_ARRAY;
+
+	if (head->alloc->free_f) {
+		evo_alloc_free(head->alloc, head);
+	}
+	*arr_ptr = (void*)(type + 2);
+}
+#endif // CYLIBX_ALLOC
 void __cyx_array_append(void** arr, void* val) {
 	__CYX_ARRAY_TYPECHECK(*arr);
 
@@ -578,7 +816,8 @@ void __cyx_array_append(void** arr, void* val) {
 		__cyx_array_expand(arr, 1);
 		head = __CYX_ARRAY_GET_HEADER(*arr);
 	}
-	memcpy(__CYX_DATA_GET_AT(head, *arr, head->len++), val, head->size);
+	memcpy(__CYX_DATA_GET_AT(head, *arr, head->len), val, head->size);
+	head->len++;
 }
 void __cyx_array_insert(void** arr, void* val, int pos) {
 	__CYX_ARRAY_TYPECHECK(*arr);
@@ -604,9 +843,7 @@ void* __cyx_array_remove(void* arr, int pos) {
 		memmove(__CYX_DATA_GET_AT(head, arr, pos), __CYX_DATA_GET_AT(head, arr, pos + 1), (head->len - pos) * head->size);
 	}
 	--head->len;
-
-	void* ret = NULL;
-	return ret;
+	return NULL;
 }
 void* __cyx_array_at(void* arr, int pos) {
 	if (!arr) { return NULL; }
@@ -617,6 +854,22 @@ void* __cyx_array_at(void* arr, int pos) {
 	if (pos >= (int)head->len) { return NULL; }
 
 	return (char*)arr + pos * head->size;
+}
+void cyx_array_reverse(void* arr) {
+	__CYX_ARRAY_TYPECHECK(arr);
+
+	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
+
+	if (head->len <= 1) { return; }
+
+	__cyx_temp_set_mark(&__cyx_temp_stack);
+	void* temp = __cyx_temp_malloc(&__cyx_temp_stack, head->size);
+	for (size_t i = 0, j = head->len - 1; i < j; ++i, --j) {
+		memcpy(temp, __CYX_DATA_GET_AT(head, arr, i), head->size);
+		memcpy(__CYX_DATA_GET_AT(head, arr, i), __CYX_DATA_GET_AT(head, arr, j), head->size);
+		memcpy(__CYX_DATA_GET_AT(head, arr, j), temp, head->size);
+	}
+	__cyx_temp_reset_mark(&__cyx_temp_stack);
 }
 void cyx_array_free(void* arr) {
 	__CYX_ARRAY_TYPECHECK(arr);
@@ -633,14 +886,21 @@ void cyx_array_free(void* arr) {
 			}
 		}
 	}
+#ifndef CYLIBX_ALLOC
 	free(head);
+#else
+	if (head->alloc->free_f) {
+		free(head);
+	} else {
+		fprintf(stderr, "ERROR:\tThe allocator you've provided to the array doesn't free single elements as you expected!\n");
+	}
+#endif // CYLIBX_ALLOC
 }
 void __cyx_array_append_mult_n(void** arr_ptr, size_t n, const void* mult) {
 	void* arr = *arr_ptr;
 	__CYX_ARRAY_TYPECHECK(arr);
 
 	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
-	if (__CYX_TEMP_DELETED_FILLED) { __cyx_temp_reset_deleted(); }
 
 	if (head->len + n >= head->cap) {
 		__cyx_array_expand(arr_ptr, n);
@@ -656,7 +916,7 @@ void cyx_array_print(const void* arr) {
 
 	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
 	assert(head->print_fn && "ERROR: No print function provided to the array!");
-	printf("{ ");
+	printf("[ ");
 	if (!head->is_ptr) {
 		for (size_t i = 0; i < head->len; ++i) {
 			if (i != 0) { printf(", "); }
@@ -668,7 +928,7 @@ void cyx_array_print(const void* arr) {
 			head->print_fn(*(void**)((char*)arr + i * head->size));
 		}
 	}
-	printf(" }");
+	printf(" ]");
 }
 void cyx_array_clear(void* arr) {
 	__CYX_ARRAY_TYPECHECK(arr);
@@ -676,17 +936,6 @@ void cyx_array_clear(void* arr) {
 	head->len = 0;
 }
 
-void cyx_array_reverse(void* arr) {
-	__CYX_ARRAY_TYPECHECK(arr);
-
-	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
-
-	if (head->len <= 1) { return; }
-
-	for (size_t i = 0, j = head->len - 1; i < j; ++i, --j) {
-		__CYX_SWAP(__CYX_DATA_GET_AT(head, arr, i), __CYX_DATA_GET_AT(head, arr, j), head->size);
-	}
-}
 void __cyx_array_sort(void* arr, int start, int end) {
 	__CYX_ARRAY_TYPECHECK(arr);
 
@@ -699,7 +948,6 @@ void __cyx_array_sort(void* arr, int start, int end) {
 		}
 		return;
 	}
-
 	void* pivot = (char*)arr + end * head->size;
 	void* a = (char*)arr + (start - 1) * head->size;
 	if (!head->is_ptr) {
@@ -738,14 +986,14 @@ void* __cyx_array_map(const void* arr, void (*fn)(void*, const void*)) {
 		.cmp_fn = head->cmp_fn,
 	});
 
-	__cyx_temp_buffer_marker_set();
-	void* curr_res = __cyx_temp_buffer_alloc(head->size);
+	__cyx_temp_set_mark(&__cyx_temp_stack);
+	void* curr_res = __cyx_temp_malloc(&__cyx_temp_stack, head->size);
 	for (size_t i = 0; i < head->len; ++i) {
 		fn(curr_res, curr);
 		__cyx_array_append(&res, curr_res);
 		curr = (char*)curr + head->size;
 	}
-	__cyx_temp_buffer_marker_reset();
+	__cyx_temp_reset_mark(&__cyx_temp_stack);
 	return res;
 }
 void* cyx_array_map_self(void* arr, void (*fn)(void*, const void*)) {
@@ -754,14 +1002,14 @@ void* cyx_array_map_self(void* arr, void (*fn)(void*, const void*)) {
 	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
 	void* val = arr;
 
-	__cyx_temp_buffer_marker_set();
-	void* res = __cyx_temp_buffer_alloc(head->size);
+	__cyx_temp_set_mark(&__cyx_temp_stack);
+	void* res = __cyx_temp_malloc(&__cyx_temp_stack, head->size);
 	for (size_t i = 0; i < head->len; ++i) {
 		fn(res, val);
 		memcpy(val, res, head->size);
 		val = (char*)val + head->size;
 	}
-	__cyx_temp_buffer_marker_reset();
+	__cyx_temp_reset_mark(&__cyx_temp_stack);
 	return arr;
 }
 void* __cyx_array_filter(const void* arr, int (*fn)(const void*)) {
@@ -828,7 +1076,7 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 
 	__CyxArrayHeader* head = __CYX_ARRAY_GET_HEADER(arr);
 
-	void* ret = __cyx_temp_alloc_deleted(head->size, accumulator, head->is_ptr, head->defer_fn);
+	void* ret = __cyx_temp_malloc(&__cyx_temp_stack, head->size); // TODO: Technically fills the temp allocator should be fixed
 	if (head->defer_fn) { head->defer_fn(!head->is_ptr ? accumulator : *(void**)accumulator); }
 
 	for (size_t i = 0; i < head->len; ++i) { fn(ret, __CYX_DATA_GET_AT(head, arr, i)); }
@@ -846,25 +1094,38 @@ void* __cyx_array_fold(void* arr, void* accumulator, void (*fn)(void*, const voi
 
 #if __CYX_CLOSE_FOLD
 
-#define __CYX_BITMAP_CALC_SIZE(size) (((size) - 1) / (8 * sizeof(size_t)) + 1)
-#define __CYX_BITMAP_GET_HEADER(bitmap) ((size_t*)__CYX_GET_TYPE(bitmap) - 1)
-#define cyx_bitmap_size(bitmap) (*((size_t*)__CYX_GET_TYPE(bitmap) - 1))
-#define __CYX_BITMAP_TYPECHECK(arr) assert(*__CYX_GET_TYPE(arr) == __CYX_TYPE_BITMAP && \
-		"ERROR: Type missmatch! Type of the provided pointer is not bitmap but was expected to be of type bitmap!")
+typedef struct {
+	size_t size;
 
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* alloc;
+#endif // CYLIBX_ALLOC
+} __CyxBitmapHeader;
+
+#define __CYX_BITMAP_CALC_SIZE(size) (((size) - 1) / (8 * sizeof(size_t)) + 1)
+#define __CYX_BITMAP_HEADER_SIZE (sizeof(__CyxBitmapHeader))
+#define __CYX_BITMAP_GET_HEADER(bitmap) ((__CyxBitmapHeader*)__CYX_GET_TYPE(bitmap) - 1)
+#define __CYX_BITMAP_TYPECHECK(arr) assert(*__CYX_GET_TYPE(arr) == __CYX_TYPE_BITMAP && \
+	"ERROR: Type missmatch! Type of the provided pointer is not bitmap but was expected to be of type bitmap!")
+#define cyx_bitmap_size(bitmap) (__CYX_BITMAP_GET_HEADER(bitmap)->size)
+
+#ifndef CYLIBX_ALLOC // bitmap_new
 size_t* cyx_bitmap_new(size_t size);
-size_t* cyx_bitmap_copy(const size_t* bitmap);
-int cyx_bitmap_get(const size_t* bitmap, int pos);
+#else
+size_t* cyx_bitmap_new(EvoAllocator* allocator, size_t size);
+#endif // CYLIBX_ALLOC
+size_t* cyx_bitmap_copy(const size_t* const bitmap);
+int cyx_bitmap_get(const size_t* const bitmap, int pos);
 void cyx_bitmap_flip(size_t* bitmap, int pos);
 void cyx_bitmap_set(size_t* bitmap, int pos, int val);
 void cyx_bitmap_free(void* bitmap);
 void cyx_bitmap_print(const void* bitmap);
-size_t* cyx_bitmap_and(const size_t* bitmap1, const size_t* bitmap2);
-size_t* cyx_bitmap_and_self(size_t* self, const size_t* other);
-size_t* cyx_bitmap_or(const size_t* bitmap1, const size_t* bitmap2);
-size_t* cyx_bitmap_or_self(size_t* self, const size_t* other);
-size_t* cyx_bitmap_xor(const size_t* bitmap1, const size_t* bitmap2);
-size_t* cyx_bitmap_xor_self(size_t* self, const size_t* other);
+size_t* cyx_bitmap_and(const size_t* const bitmap1, const size_t* const bitmap2);
+size_t* cyx_bitmap_and_self(size_t* self, const size_t* const other);
+size_t* cyx_bitmap_or(const size_t* const bitmap1, const size_t* const bitmap2);
+size_t* cyx_bitmap_or_self(size_t* self, const size_t* const other);
+size_t* cyx_bitmap_xor(const size_t* const bitmap1, const size_t* const bitmap2);
+size_t* cyx_bitmap_xor_self(size_t* self, const size_t* const other);
 
 #ifdef CYLIBX_STRIP_PREFIX
 
@@ -889,24 +1150,45 @@ size_t* cyx_bitmap_xor_self(size_t* self, const size_t* other);
 
 #ifdef CYLIBX_IMPLEMENTATION
 
+
+#ifndef CYLIBX_ALLOC // bitmap_new
 size_t* cyx_bitmap_new(size_t size) {
-	size_t to_alloc = sizeof(size_t) + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(size) * sizeof(size_t);
-	size_t* ret = malloc(to_alloc);
+	size_t to_alloc = __CYX_BITMAP_HEADER_SIZE + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(size) * sizeof(size_t);
+	__CyxBitmapHeader* ret = malloc(to_alloc);
 	memset(ret, 0, to_alloc);
 	if (!ret) { return NULL; }
-	*ret = size;
+	ret->size = size;
 
 	enum __CyxDataType* type = (void*)(ret + 1);
 	*type = __CYX_TYPE_BITMAP;
 	return (void*)(type + 2);
 }
-size_t* cyx_bitmap_copy(const size_t* bitmap) {
-	size_t alloc_size = sizeof(size_t) + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(cyx_bitmap_size(bitmap)) * sizeof(size_t);
-	size_t* ret = malloc(alloc_size);
+#else
+size_t* cyx_bitmap_new(EvoAllocator* allocator, size_t size) {
+	if (!allocator) { allocator = &EVO_LIBC_ALLOCATOR; }
+	size_t to_alloc = __CYX_BITMAP_HEADER_SIZE + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(size) * sizeof(size_t);
+	__CyxBitmapHeader* ret = evo_alloc_malloc(allocator, to_alloc);
+	if (!ret) { return NULL; }
+	memset(ret, 0, to_alloc);
+	ret->size = size;
+	ret->alloc= allocator;
 
+	enum __CyxDataType* type = (void*)(ret + 1);
+	*type = __CYX_TYPE_BITMAP;
+	return (void*)(type + 2);
+}
+#endif // CYLIBX_ALLOC
+size_t* cyx_bitmap_copy(const size_t* bitmap) {
+	__CyxBitmapHeader* head = __CYX_BITMAP_GET_HEADER(bitmap);
+	size_t alloc_size = sizeof(size_t) + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(head->size) * sizeof(size_t);
+#ifndef CYLIBX_ALLOC
+	__CyxBitmapHeader* ret = malloc(alloc_size);
+#else
+	__CyxBitmapHeader* ret = evo_alloc_malloc(head->alloc, alloc_size);
+#endif // CYLIBX_ALLOC
 	if (!ret) { return NULL; }
 
-	memcpy(ret, __CYX_BITMAP_GET_HEADER(bitmap), alloc_size);
+	memcpy(ret, head, alloc_size);
 	enum __CyxDataType* type = (void*)(ret + 1);
 	*type = __CYX_TYPE_BITMAP;
 	return (void*)(type + 2);
@@ -955,7 +1237,16 @@ void cyx_bitmap_set(size_t* bitmap, int pos, int val) {
 void cyx_bitmap_free(void* bitmap) {
 	__CYX_BITMAP_TYPECHECK(bitmap);
 
-	free(__CYX_BITMAP_GET_HEADER(bitmap));
+	__CyxBitmapHeader* head = __CYX_BITMAP_GET_HEADER(bitmap);
+#ifndef CYLIBX_ALLOC
+	free(head);
+#else
+	if (head->alloc) {
+		evo_alloc_free(head->alloc, head);
+	} else {
+		fprintf(stderr, "ERROR:\tThe allocator you've provided to the bitmap doesn't free single elements as you expected!\n");
+	}
+#endif // CYLIBX_ALLOC
 }
 void cyx_bitmap_print(const void* bitmap) {
 	__CYX_BITMAP_TYPECHECK(bitmap);
@@ -1115,6 +1406,7 @@ size_t cyx_hash_double(const void* val) {
 size_t cyx_hash_str(const void* val) {
     size_t hash = 5381;
 	char* str = (char*)val;
+	__CYX_STRING_TYPECHECK(str);
 	for (size_t i = 0; i < cyx_str_length(str); ++i) { 
         hash = ((hash << 5) + hash) + str[i];
 	}
@@ -1135,10 +1427,18 @@ int cyx_eq_str(const void* a, const void* b) {
 	return 1;
 }
 
-int cyx_cmp_int8(const void* a, const void* b) { return *(int8_t*)a < *(int8_t*)b ? -1 : (*(int8_t*)a > *(int8_t*)b ? 1 : 0); }
-int cyx_cmp_int16(const void* a, const void* b) { return *(int16_t*)a < *(int16_t*)b ? -1 : (*(int16_t*)a > *(int16_t*)b ? 1 : 0); }
-int cyx_cmp_int32(const void* a, const void* b) { return *(int32_t*)a < *(int32_t*)b ? -1 : (*(int32_t*)a > *(int32_t*)b ? 1 : 0); }
-int cyx_cmp_int64(const void* a, const void* b) { return *(int64_t*)a < *(int64_t*)b ? -1 : (*(int64_t*)a > *(int64_t*)b ? 1 : 0); }
+int cyx_cmp_int8(const void* a, const void* b) {
+	return *(int8_t*)a < *(int8_t*)b ? -1 : (*(int8_t*)a > *(int8_t*)b ? 1 : 0);
+}
+int cyx_cmp_int16(const void* a, const void* b) {
+	return *(int16_t*)a < *(int16_t*)b ? -1 : (*(int16_t*)a > *(int16_t*)b ? 1 : 0);
+}
+int cyx_cmp_int32(const void* a, const void* b) {
+	return *(int32_t*)a < *(int32_t*)b ? -1 : (*(int32_t*)a > *(int32_t*)b ? 1 : 0);
+}
+int cyx_cmp_int64(const void* a, const void* b) {
+	return *(int64_t*)a < *(int64_t*)b ? -1 : (*(int64_t*)a > *(int64_t*)b ? 1 : 0);
+}
 
 #endif // CYLIBX_IMPLEMENTATION
 
@@ -1160,10 +1460,18 @@ typedef struct {
 	void (*defer_fn)(void*);
 	void (*print_fn)(const void*);
 	
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* alloc;
+#endif // CYLIBX_ALLOC
+
 	char is_ptr;
 } __CyxHashSetHeader;
 
 struct __CyxHashSetParams {
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* __allocator;
+#endif // CYLIBX_ALLOC
+
 	size_t __size;
 	char is_ptr;
 
@@ -1185,7 +1493,7 @@ struct __CyxHashSetContainsParams {
 #define __CYX_HASH_SET_HEADER_SIZE (sizeof(__CyxHashSetHeader))
 #define __CYX_HASH_SET_GET_HEADER(set) ((__CyxHashSetHeader*)__CYX_GET_TYPE(set) - 1)
 #define __CYX_HASH_SET_GET_BITMAP(set) ((size_t*)((char*)set + __CYX_HASH_SET_GET_HEADER(set)->cap * __CYX_HASH_SET_GET_HEADER(set)->size +\
-			sizeof(size_t) + __CYX_TYPE_SIZE))
+			__CYX_BITMAP_HEADER_SIZE + __CYX_TYPE_SIZE))
 #define __CYX_HASHSET_TYPECHECK(set) assert(*__CYX_GET_TYPE(set) == __CYX_TYPE_HASHSET && \
 		"ERROR: Type missmatch! Type of the provided pointer is not hashset but was expected to be of type hashset!")
 
@@ -1218,14 +1526,19 @@ void* __cyx_hashset_diff_self(void* self, const void* other);
 		if (cyx_bitmap_get(__CYX_HASH_SET_GET_BITMAP(set), 2 * __CYX_UNIQUE_VAL__(counter)) && \
 			!cyx_bitmap_get(__CYX_HASH_SET_GET_BITMAP(set), 2 * __CYX_UNIQUE_VAL__(counter) + 1))
 
-#define __cyx_hashset_new_params(...) __cyx_hashset_new((struct __CyxHashSetParams){ __VA_ARGS__ })
-#define cyx_hashset_new(T, hash, eq, ...) (T*)__cyx_hashset_new_params(.__size = sizeof(T), .__hash_fn = hash, .__eq_fn = eq, __VA_ARGS__)
-#define cyx_hashset_copy(set) (typeof(*set)*)__cyx_hashset_copy(set)
+#define __cyx_hashset_new_params(...) (__cyx_hashset_new((struct __CyxHashSetParams){ __VA_ARGS__ }))
+
+#ifndef CYLIBX_ALLOC //hashset_new
+#define cyx_hashset_new(T, hash, eq, ...) ((T*)__cyx_hashset_new_params(.__size = sizeof(T), .__hash_fn = (hash), .__eq_fn = (eq), __VA_ARGS__))
+#else
+#define cyx_hashset_new(T, allocator, hash, eq, ...) ((T*)__cyx_hashset_new_params(.__allocator = (allocator), .__size = sizeof(T), .__hash_fn = (hash), .__eq_fn = (eq), __VA_ARGS__))
+#endif // CYLIBX_ALLOC
+#define cyx_hashset_copy(set) ((typeof(*set)*)__cyx_hashset_copy(set))
 #define cyx_hashset_add(set, val) do { \
 	typeof(*set) v = val; \
 	__cyx_hashset_add((void**)&set, &v); \
 } while(0)
-#define cyx_hashset_add_mult_n(set, n, mult) __cyx_hashset_add_mult_n((void**)&(set), n, (void**)mult)
+#define cyx_hashset_add_mult_n(set, n, mult) (__cyx_hashset_add_mult_n((void**)&(set), n, (void**)mult))
 #define cyx_hashset_add_mult(set, ...) do { \
 	typeof(*set) mult[] = { __VA_ARGS__ };\
 	__cyx_hashset_add_mult_n((void**)&(set), sizeof(mult) / sizeof(*mult), (void**)mult); \
@@ -1234,25 +1547,29 @@ void* __cyx_hashset_diff_self(void* self, const void* other);
 	typeof(*set) v = val; \
 	__cyx_hashset_remove(set, &v); \
 } while(0)
-#define __cyx_hashset_contains_params(...) __cyx_hashset_contains((struct __CyxHashSetContainsParams){ __VA_ARGS__ })
+#define __cyx_hashset_contains_params(...) (__cyx_hashset_contains((struct __CyxHashSetContainsParams){ __VA_ARGS__ }))
 #define cyx_hashset_contains(set, val, ...) ({ \
 	typeof(*set) v = val; \
 	__cyx_hashset_contains_params(.__set = set, .__val = &v, __VA_ARGS__); \
 })
 
-#define cyx_hashset_union(set1, set2) (typeof(*set1)*)__cyx_hashset_union(set1, set2)
-#define cyx_hashset_union_self(self, other) (typeof(*self)*)__cyx_hashset_union_self(self, other)
-#define cyx_hashset_intersec(set1, set2) (typeof(*set1)*)__cyx_hashset_intersec(set1, set2)
-#define cyx_hashset_intersec_self(self, other) (typeof(*self)*)__cyx_hashset_intersec_self(self, other)
-#define cyx_hashset_diff(set1, set2) (typeof(*set1)*)__cyx_hashset_diff(set1, set2)
-#define cyx_hashset_diff_self(self, other) (typeof(*self)*)__cyx_hashset_diff_self(self, other)
+#define cyx_hashset_union(set1, set2) ((typeof(*set1)*)__cyx_hashset_union(set1, set2))
+#define cyx_hashset_union_self(self, other) ((typeof(*self)*)__cyx_hashset_union_self(self, other))
+#define cyx_hashset_intersec(set1, set2) ((typeof(*set1)*)__cyx_hashset_intersec(set1, set2))
+#define cyx_hashset_intersec_self(self, other) ((typeof(*self)*)__cyx_hashset_intersec_self(self, other))
+#define cyx_hashset_diff(set1, set2) ((typeof(*set1)*)__cyx_hashset_diff(set1, set2))
+#define cyx_hashset_diff_self(self, other) ((typeof(*self)*)__cyx_hashset_diff_self(self, other))
 
 #ifdef CYLIBX_STRIP_PREFIX
 
 #define hashset_length(set) cyx_hashset_length(set)
 #define hashset_foreach(val, set) cyx_hashset_foreach(val, set)
 
+#ifndef CYLIBX_ALLOC
 #define hashset_new(T, hash, eq, ...) cyx_hashset_new(T, hash, eq, __VA_ARGS__)
+#else
+#define hashset_new(T, allocator, hash, eq, ...) cyx_hashset_new(T, allocator, hash, eq, __VA_ARGS__)
+#endif // CYLIBX_ALLOC
 #define hashset_copy(set) cyx_hashset_copy(set)
 #define hashset_add(set, val) cyx_hashset_add(set, val)
 #define hashset_add_mult_n(set, n, mult) cyx_hashset_add_mult_n(set, n, mult)
@@ -1275,10 +1592,11 @@ void* __cyx_hashset_diff_self(void* self, const void* other);
 
 #ifdef CYLIBX_IMPLEMENTATION
 
+#ifndef CYLIBX_ALLOC // hashset_new
 void* __cyx_hashset_new(struct __CyxHashSetParams params) {
 	size_t to_alloc = __CYX_HASH_SET_HEADER_SIZE + __CYX_TYPE_SIZE +
 		CYX_HASH_SET_BASE_SIZE * params.__size +
-		sizeof(size_t) + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(CYX_HASH_SET_BASE_SIZE * 2) * sizeof(size_t);
+		__CYX_HASH_SET_HEADER_SIZE + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(CYX_HASH_SET_BASE_SIZE * 2) * sizeof(size_t);
 
 	__CyxHashSetHeader* head = malloc(to_alloc);
 	memset(head, 0, to_alloc);
@@ -1297,15 +1615,49 @@ void* __cyx_hashset_new(struct __CyxHashSetParams params) {
 
 	size_t* bitmap = __CYX_HASH_SET_GET_BITMAP(set);
 	*__CYX_GET_TYPE(bitmap) = __CYX_TYPE_BITMAP;
-	*__CYX_BITMAP_GET_HEADER(bitmap) = CYX_HASH_SET_BASE_SIZE * 2;
+	__CYX_BITMAP_GET_HEADER(bitmap)->size = CYX_HASH_SET_BASE_SIZE * 2;
 
 	return set;
 }
+#else
+void* __cyx_hashset_new(struct __CyxHashSetParams params) {
+	size_t to_alloc = __CYX_HASH_SET_HEADER_SIZE + __CYX_TYPE_SIZE +
+		CYX_HASH_SET_BASE_SIZE * params.__size +
+		__CYX_BITMAP_HEADER_SIZE + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(CYX_HASH_SET_BASE_SIZE * 2) * sizeof(size_t);
+
+	if (!params.__allocator) { params.__allocator = &EVO_LIBC_ALLOCATOR; }
+	__CyxHashSetHeader* head = evo_alloc_malloc(params.__allocator, to_alloc);
+	if (!head) { return NULL; }
+	memset(head, 0, to_alloc);
+
+	enum __CyxDataType* type = (void*)(head + 1);
+	*type = __CYX_TYPE_HASHSET;
+	void* set = (void*)(type + 2);
+
+	head->cap = CYX_HASH_SET_BASE_SIZE;
+	head->size = params.__size;
+	head->is_ptr = params.is_ptr;
+	head->hash_fn = params.__hash_fn;
+	head->eq_fn = params.__eq_fn;
+	head->print_fn = params.print_fn;
+	head->defer_fn = params.defer_fn;
+	head->alloc = params.__allocator;
+
+	size_t* bitmap = __CYX_HASH_SET_GET_BITMAP(set);
+	*__CYX_GET_TYPE(bitmap) = __CYX_TYPE_BITMAP;
+	__CYX_BITMAP_GET_HEADER(bitmap)->size = CYX_HASH_SET_BASE_SIZE * 2;
+
+	return set;
+}
+#endif // CYLIBX_ALLOC
 void* __cyx_hashset_copy(const void* set) {
 	__CYX_HASHSET_TYPECHECK(set);
 
 	__CyxHashSetHeader* head = __CYX_HASH_SET_GET_HEADER(set);
 	void* set_res = __cyx_hashset_new((struct __CyxHashSetParams){
+#ifdef CYLIBX_ALLOC
+		.__allocator = head->alloc,
+#endif // CYLIBX_ALLOC
 		.__size = head->size,
 		.__hash_fn = head->hash_fn,
 		.__eq_fn = head->eq_fn,
@@ -1322,9 +1674,13 @@ void __cyx_hashset_expand(void** set_ptr) {
 	__CyxHashSetHeader* head = __CYX_HASH_SET_GET_HEADER(set);
 	size_t to_alloc = __CYX_HASH_SET_HEADER_SIZE + __CYX_TYPE_SIZE +
 		2 * head->cap * head->size +
-		sizeof(size_t) + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(head->cap * 4) * sizeof(size_t);
+		__CYX_BITMAP_HEADER_SIZE + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(head->cap * 4) * sizeof(size_t);
 
+#ifndef CYLIBX_ALLOC
 	__CyxHashSetHeader* new_head = malloc(to_alloc);
+#else
+	__CyxHashSetHeader* new_head = evo_alloc_malloc(head->alloc, to_alloc);
+#endif // CYLIBX_ALLOC
 	memset(new_head, 0, to_alloc);
 
 	enum __CyxDataType* type = (void*)(new_head + 1);
@@ -1337,7 +1693,7 @@ void __cyx_hashset_expand(void** set_ptr) {
 
 	size_t* new_bitmap = __CYX_HASH_SET_GET_BITMAP(new_set);
 	*__CYX_GET_TYPE(new_bitmap) = __CYX_TYPE_BITMAP;
-	*__CYX_BITMAP_GET_HEADER(new_bitmap) = 2 * new_head->cap;
+	__CYX_BITMAP_GET_HEADER(new_bitmap)->size = 2 * new_head->cap;
 
 	for (size_t i = 0; i < head->cap; ++i) {
 		if (cyx_bitmap_get(bitmap, 2 * i)) {
@@ -1354,7 +1710,13 @@ void __cyx_hashset_expand(void** set_ptr) {
 		}
 	}
 
+#ifndef CYLIBX_ALLOC
 	free(head);
+#else
+	if (head->alloc->free_f) {
+		evo_alloc_free(head->alloc, head);
+	}
+#endif // CYLIBX_ALLOC
 	*set_ptr = new_set;
 }
 void __cyx_hashset_add(void** set_ptr, void* val) {
@@ -1483,7 +1845,6 @@ void cyx_hashset_free(void* set) {
 	__CYX_HASHSET_TYPECHECK(set);
 
 	__CyxHashSetHeader* head = __CYX_HASH_SET_GET_HEADER(set);
-	if (__CYX_TEMP_DELETED_FILLED) { __cyx_temp_reset_deleted(); }
 
 	if (head->defer_fn) {
 		if (!head->is_ptr) {
@@ -1493,7 +1854,15 @@ void cyx_hashset_free(void* set) {
 		}
 	}
 	
+#ifndef CYLIBX_ALLOC
 	free(head);
+#else
+	if (head->alloc->free_f) {
+		evo_alloc_free(head->alloc, head);
+	} else {
+		fprintf(stderr, "ERROR:\tThe allocator you've provided to the hashset doesn't free single elements as you expected!\n");
+	}
+#endif // CYLIBX_ALLOC
 }
 void cyx_hashset_print(const void* set) {
 	__CYX_HASHSET_TYPECHECK(set);
@@ -1526,8 +1895,8 @@ void cyx_hashset_clear(void* set) {
 	}
 
 	size_t* bitmap = __CYX_HASH_SET_GET_BITMAP(set);
-	size_t bitmap_head = *__CYX_BITMAP_GET_HEADER(bitmap);
-	memset(bitmap, 0, __CYX_BITMAP_CALC_SIZE(bitmap_head) * sizeof(size_t));
+	__CyxBitmapHeader* bitmap_head = __CYX_BITMAP_GET_HEADER(bitmap);
+	memset(bitmap, 0, __CYX_BITMAP_CALC_SIZE(bitmap_head->size) * sizeof(size_t));
 }
 void* __cyx_hashset_union(const void* set1, const void* set2) {
 	__CYX_HASHSET_TYPECHECK(set1);
@@ -1637,11 +2006,19 @@ typedef struct {
 	void (*print_key_fn)(const void*);
 	void (*print_value_fn)(const void*);
 
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* alloc;
+#endif // CYLIBX_ALLOC
+
 	char is_key_ptr;
 	char is_value_ptr;
 } __CyxHashMapHeader;
 
 struct __CyxHashMapParams {
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* __allocator;
+#endif // CYLIBX_ALLOC
+
 	size_t __size_key;
 	size_t __size_value;
 	
@@ -1668,7 +2045,7 @@ struct __CyxHashMapFuncParams {
 #define __CYX_HASHMAP_HEADER_SIZE (sizeof(__CyxHashMapHeader))
 #define __CYX_HASHMAP_GET_HEADER(map) ((__CyxHashMapHeader*)__CYX_GET_TYPE(map) - 1)
 #define __CYX_HASHMAP_GET_BITMAP(map) ((size_t*)((char*)(map) + __CYX_HASHMAP_GET_HEADER(map)->size * __CYX_HASHMAP_GET_HEADER(map)->cap + \
-			sizeof(size_t) + __CYX_TYPE_SIZE))
+			__CYX_BITMAP_HEADER_SIZE + __CYX_TYPE_SIZE))
 #define __CYX_HASHMAP_TYPECHECK(map) assert(*__CYX_GET_TYPE(map) == __CYX_TYPE_HASHMAP && \
 		"ERROR: Type missmatch! Type of the provided pointer is not hashmap but was expected to be of type hashmap!")
 
@@ -1692,7 +2069,11 @@ void cyx_hashmap_print(const void* map);
 			!cyx_bitmap_get(__CYX_HASHMAP_GET_BITMAP(map), 2 * __CYX_UNIQUE_VAL__(i) + 1))
 
 #define __cyx_hashmap_new_params(...) __cyx_hashmap_new((struct __CyxHashMapParams){ __VA_ARGS__ })
-#define cyx_hashmap_new(T, hash, eq, ...) (T*)__cyx_hashmap_new_params(.__size_key = sizeof(((T*)0)->key), .__size_value = sizeof(((T*)0)->value), .__hash_fn = hash, .__eq_fn = eq, __VA_ARGS__)
+#ifndef CYLIBX_ALLOC // hashmap_new
+#define cyx_hashmap_new(T, hash, eq, ...) (T*)__cyx_hashmap_new_params(.__size_key = sizeof(typeof(((T*)0)->key)), .__size_value = sizeof(typeof(((T*)0)->value)), .__hash_fn = hash, .__eq_fn = eq, __VA_ARGS__)
+#else
+#define cyx_hashmap_new(T, allocator, hash, eq, ...) (T*)__cyx_hashmap_new_params(.__allocator = (allocator), .__size_key = sizeof(typeof(((T*)0)->key)), .__size_value = sizeof(typeof(((T*)0)->value)), .__hash_fn = hash, .__eq_fn = eq, __VA_ARGS__)
+#endif // CYLIBX_ALLOC
 #define cyx_hashmap_add(map, k) do { \
 	typeof(map->key) key = k; \
 	__cyx_hashmap_add((void**)&(map), &key); \
@@ -1718,7 +2099,11 @@ void cyx_hashmap_print(const void* map);
 #define hashmap_length(map) cyx_hashmap_length(map)
 #define hashmap_foreach(val, map) cyx_hashmap_foreach(val, map)
 
+#ifndef CYLIBX_ALLOC // hashmap_new
 #define hashmap_new(T, hash, eq, ...) cyx_hashmap_new(T, hash, eq, __VA_ARGS__)
+#else
+#define hashmap_new(T, allocator, hash, eq, ...) cyx_hashmap_new(T, allocator, hash, eq, __VA_ARGS__)
+#endif // CYLIBX_ALLOC
 #define hashmap_add(map, k) cyx_hashmap_add(map, k)
 #define hashmap_add_v(map, k, v) cyx_hashmap_add_v(map, k, v)
 #define hashmap_get(map, k, ...) cyx_hashmap_get(map, k, __VA_ARGS__)
@@ -1731,10 +2116,11 @@ void cyx_hashmap_print(const void* map);
 
 #ifdef CYLIBX_IMPLEMENTATION
 
+#ifndef CYLIBX_ALLOC // hashmap_new
 void* __cyx_hashmap_new(struct __CyxHashMapParams params) {
 	size_t alloc_size = __CYX_HASHMAP_HEADER_SIZE + __CYX_TYPE_SIZE +
 			CYX_HASHMAP_BASE_SIZE * (params.__size_key + params.__size_value) +
-			sizeof(size_t) + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(2 * CYX_HASHMAP_BASE_SIZE) * sizeof(size_t);
+			__CYX_BITMAP_HEADER_SIZE + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(2 * CYX_HASHMAP_BASE_SIZE) * sizeof(size_t);
 	
 	__CyxHashMapHeader* head = malloc(alloc_size);
 	memset(head, 0, alloc_size);
@@ -1761,10 +2147,49 @@ void* __cyx_hashmap_new(struct __CyxHashMapParams params) {
 	void* map = (void*)(type + 2);
 	size_t* bitmap = __CYX_HASHMAP_GET_BITMAP(map);
 	*__CYX_GET_TYPE(bitmap) = __CYX_TYPE_BITMAP;
-	*__CYX_BITMAP_GET_HEADER(bitmap) = 2 * CYX_HASHMAP_BASE_SIZE;
+	__CYX_BITMAP_GET_HEADER(bitmap)->size = 2 * CYX_HASHMAP_BASE_SIZE;
 	
 	return map;
 }
+#else
+void* __cyx_hashmap_new(struct __CyxHashMapParams params) {
+	size_t alloc_size = __CYX_HASHMAP_HEADER_SIZE + __CYX_TYPE_SIZE +
+			CYX_HASHMAP_BASE_SIZE * (params.__size_key + params.__size_value) +
+			__CYX_BITMAP_HEADER_SIZE + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(2 * CYX_HASHMAP_BASE_SIZE) * sizeof(size_t);
+	
+	if (!params.__allocator) { params.__allocator = &EVO_LIBC_ALLOCATOR; }
+	__CyxHashMapHeader* head = evo_alloc_malloc(params.__allocator, alloc_size);
+	memset(head, 0, alloc_size);
+
+	head->len = 0;
+	head->cap = CYX_HASHMAP_BASE_SIZE;
+	head->size_key = params.__size_key;
+	head->size_value = params.__size_value;
+	head->size = params.__size_value + params.__size_key;
+	
+	head->is_key_ptr = params.is_key_ptr;
+	head->is_value_ptr = params.is_value_ptr;
+
+	head->hash_fn = params.__hash_fn;
+	head->eq_fn = params.__eq_fn;
+	head->defer_key_fn = params.defer_key_fn;
+	head->defer_value_fn = params.defer_value_fn;
+	head->print_key_fn = params.print_key_fn;
+	head->print_value_fn = params.print_value_fn;
+
+	head->alloc = params.__allocator;
+	
+	enum __CyxDataType* type = (void*)(head + 1);
+	*type = __CYX_TYPE_HASHMAP;
+
+	void* map = (void*)(type + 2);
+	size_t* bitmap = __CYX_HASHMAP_GET_BITMAP(map);
+	*__CYX_GET_TYPE(bitmap) = __CYX_TYPE_BITMAP;
+	__CYX_BITMAP_GET_HEADER(bitmap)->size = 2 * CYX_HASHMAP_BASE_SIZE;
+	
+	return map;
+}
+#endif // CYLIBX_ALLOC
 void __cyx_hashmap_expand(void** map_ptr) {
 	void* map = *map_ptr;
 
@@ -1773,8 +2198,12 @@ void __cyx_hashmap_expand(void** map_ptr) {
 
 	size_t alloc_size = __CYX_HASHMAP_HEADER_SIZE + __CYX_TYPE_SIZE +
 			(2 * head->cap) * head->size +
-			sizeof(size_t) + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(head->cap * 4) * sizeof(size_t);
+			__CYX_BITMAP_HEADER_SIZE + __CYX_TYPE_SIZE + __CYX_BITMAP_CALC_SIZE(head->cap * 4) * sizeof(size_t);
+#ifndef CYLIBX_ALLOC
 	__CyxHashMapHeader* new_head = malloc(alloc_size);
+#else
+	__CyxHashMapHeader* new_head = evo_alloc_malloc(head->alloc, alloc_size);
+#endif // CYLIBX_ALLOC
 
 	memset(new_head, 0, alloc_size);
 	memcpy(new_head, head, __CYX_HASHMAP_HEADER_SIZE);
@@ -1787,7 +2216,7 @@ void __cyx_hashmap_expand(void** map_ptr) {
 
 	size_t* new_bitmap = __CYX_HASHMAP_GET_BITMAP(new_map);
 	*__CYX_GET_TYPE(new_bitmap) = __CYX_TYPE_BITMAP;
-	*__CYX_BITMAP_GET_HEADER(new_bitmap) = new_head->cap * 2;
+	__CYX_BITMAP_GET_HEADER(new_bitmap)->size = new_head->cap * 2;
 	
 	for (size_t i = 0; i < head->cap; ++i) {
 		if (!cyx_bitmap_get(bitmap, 2 * i) || cyx_bitmap_get(bitmap, 2 * i + 1)) { continue; }
@@ -1801,16 +2230,17 @@ void __cyx_hashmap_expand(void** map_ptr) {
 				cyx_bitmap_set(new_bitmap, 2 * probe, 1);
 				++head->len;
 				break;
-			} else if (cyx_bitmap_get(new_bitmap, 2 * probe + 1)) {
-				memcpy((char*)new_map + probe * head->size, key, head->size);
-				cyx_bitmap_set(new_bitmap, 2 * probe + 1, 0);
-				++new_head->len;
-				break;
 			}
 		}
 	}
 
+#ifndef CYLIBX_ALLOC
 	free(head);
+#else
+	if (head->alloc->free_f) {
+		evo_alloc_free(head->alloc, head);
+	}
+#endif // CYLIBX_ALLOC
 	*map_ptr = new_map;
 }
 void __cyx_hashmap_add(void** map_ptr, void* key) {
@@ -1898,7 +2328,7 @@ void* __cyx_hashmap_get(struct __CyxHashMapFuncParams params) {
 				 head->eq_fn(*(void**)((char*)params.__map + probe * head->size), *(void**)params.__key)) {
 				res = (char*)params.__map + probe * head->size + head->size_key;
 				break;
-			}
+			} 
 		} else {
 			break;
 		}
@@ -1926,9 +2356,9 @@ void* __cyx_hashmap_remove(struct __CyxHashMapFuncParams params) {
 				 head->eq_fn(*(void**)((char*)params.__map + probe * head->size), *(void**)params.__key)) {
 				res = (int)probe;
 				break;
-			} else {
-				break;
-			}
+			} 
+		} else {
+			break;
 		}
 	}
 	if (params.defer && head->defer_key_fn) {
@@ -1944,7 +2374,8 @@ void* __cyx_hashmap_remove(struct __CyxHashMapFuncParams params) {
 		}
 		void* value = (char*)key + head->size_key;
 		if (head->defer_value_fn) {
-			removed = __cyx_temp_alloc_deleted(head->size_value, value, head->is_value_ptr, head->defer_value_fn);
+			removed = __cyx_temp_malloc(&__cyx_temp_stack, head->size_value);
+			memcpy(removed, value, head->size_value); // TODO: fix memory leak
 		} else {
 			removed = value;
 		}
@@ -1955,7 +2386,7 @@ void cyx_hashmap_free(void* map) {
 	__CYX_HASHMAP_TYPECHECK(map);
 	
 	__CyxHashMapHeader* head = __CYX_HASHMAP_GET_HEADER(map);
-	if (__CYX_TEMP_DELETED_FILLED) { __cyx_temp_reset_deleted(); }
+
 	size_t* bitmap = __CYX_HASHMAP_GET_BITMAP(map);
 	if (head->defer_key_fn) {
 		if (!head->is_key_ptr) {
@@ -1991,7 +2422,15 @@ void cyx_hashmap_free(void* map) {
 			}
 		}
 	}
+#ifndef CYLIBX_ALLOC
 	free(head);
+#else
+	if (head->alloc) {
+		evo_alloc_free(head->alloc, head);
+	} else {
+		fprintf(stderr, "ERROR:\tThe allocator you've provided to the hashmap doesn't free single elements as you expected!\n");
+	}
+#endif // CYLIBX_ALLOC
 }
 void cyx_hashmap_print(const void* map) {
 	__CYX_HASHMAP_TYPECHECK(map);
@@ -2034,10 +2473,18 @@ typedef struct {
 	void (*defer_fn)(void*);
 	void (*print_fn)(const void*);
 
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* alloc;
+#endif // CYLIBX_ALLOC
+
 	char is_ptr;
 } __CyxBinaryHeapHeader;
 
 struct __CyxBinaryHeapParams {
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* __allocator;
+#endif // CYLIBX_ALLOC
+
 	size_t __size;
 
 	char is_ptr;
@@ -2076,24 +2523,28 @@ void cyx_binheap_print(const void* heap);
 #define cyx_binheap_drain(val, heap) __CYX_BINHEAP_TYPECHECK(heap); \
 	for (typeof(*heap)* val = NULL; (val = cyx_binheap_extract(heap));)
 
-#define __cyx_binheap_new_params(...) __cyx_binheap_new((struct __CyxBinaryHeapParams){ __VA_ARGS__ })
-#define cyx_binheap_new(T, cmp, ...) (T*)__cyx_binheap_new_params(.__size = sizeof(T), .__cmp_fn = cmp, __VA_ARGS__)
+#define __cyx_binheap_new_params(...) (__cyx_binheap_new((struct __CyxBinaryHeapParams){ __VA_ARGS__ }))
+#ifndef CYLIBX_ALLOC // binheap_new
+#define cyx_binheap_new(T, cmp, ...) ((T*)__cyx_binheap_new_params(.__size = sizeof(T), .__cmp_fn = cmp, __VA_ARGS__))
+#else
+#define cyx_binheap_new(T, allocator, cmp, ...) ((T*)__cyx_binheap_new_params(.__allocator = (allocator), .__size = sizeof(T), .__cmp_fn = cmp, __VA_ARGS__))
+#endif // CYLIBX_ALLOC
 #define cyx_binheap_insert(heap, val) do { \
 	typeof(*heap) v = val; \
 	__cyx_binheap_insert((void**)&(heap), &v); \
 } while(0)
-#define cyx_binheap_insert_mult_n(heap, n, mult) __cyx_binheap_insert_mult_n((void**)&(heap), n, mult)
+#define cyx_binheap_insert_mult_n(heap, n, mult) (__cyx_binheap_insert_mult_n((void**)&(heap), n, mult))
 #define cyx_binheap_insert_mult(heap, ...) do { \
 	typeof(*heap) mult[] = { __VA_ARGS__ }; \
 	__cyx_binheap_insert_mult_n((void**)&(heap), sizeof(mult)/sizeof(*mult), mult); \
 } while(0)
-#define cyx_binheap_extract(heap) (typeof(*heap)*)__cyx_binheap_extract(heap)
-#define __cyx_binheap_contains_params(...) __cyx_binary_contains((struct __CyxBinaryHeapSearchParams){ __VA_ARGS__ })
+#define cyx_binheap_extract(heap) ((typeof(*heap)*)__cyx_binheap_extract(heap))
+#define __cyx_binheap_contains_params(...) (__cyx_binary_contains((struct __CyxBinaryHeapSearchParams){ __VA_ARGS__ }))
 #define cyx_binheap_contains(heap, val, ...) ({ \
 	typeof(*(heap)) v = (val); \
 	__cyx_binary_contains_params(.__heap = (heap), .__val = &v, __VA_ARGS__); \
 })
-#define __cyx_binheap_remove_params(...) __cyx_binheap_remove((struct __CyxBinaryHeapSearchParams){ __VA_ARGS__ })
+#define __cyx_binheap_remove_params(...) (__cyx_binheap_remove((struct __CyxBinaryHeapSearchParams){ __VA_ARGS__ }))
 #define cyx_binheap_remove(heap, val, ...) ({ \
 	typeof(*heap) v = (val); \
 	__cyx_binheap_remove_params(.__heap = (heap), .__val = &v, __VA_ARGS__); \
@@ -2104,7 +2555,11 @@ void cyx_binheap_print(const void* heap);
 #define binheap_length(heap) cyx_binheap_length(heap)
 #define binheap_drain(val, heap) cyx_binheap_drain(val, heap)
 
+#ifndef CYLIBX_ALLOC
 #define binheap_new(T, cmp, ...) cyx_binheap_new(T, cmp, __VA_ARGS__)
+#else
+#define binheap_new(T, allocator, cmp, ...) cyx_binheap_new(T, allocator, cmp, __VA_ARGS__)
+#endif // CYLIBX_ALLOC
 #define binheap_insert(heap, val) cyx_binheap_insert(heap, val)
 #define binheap_insert_mult_n(heap, n, mult) cyx_binheap_insert_mult_n(heap, n, mult)
 #define binheap_insert_mult(heap, ...) cyx_binheap_insert_mult(heap, __VA_ARGS__)
@@ -2124,7 +2579,12 @@ void cyx_binheap_print(const void* heap);
 #define __cyx_get_parent(n) (((n) - 1) >> 1)
 
 void* __cyx_binheap_new(struct __CyxBinaryHeapParams params) {
+#ifndef CYLIBX_ALLOC
 	__CyxBinaryHeapHeader* head = malloc(__CYX_BINHEAP_HEADER_SIZE + __CYX_TYPE_SIZE + params.__size * CYX_BINHEAP_BASE_SIZE);
+#else
+	if (!params.__allocator) { params.__allocator = &EVO_LIBC_ALLOCATOR; }
+	__CyxBinaryHeapHeader* head = evo_alloc_malloc(params.__allocator, __CYX_BINHEAP_HEADER_SIZE + __CYX_TYPE_SIZE + params.__size * CYX_BINHEAP_BASE_SIZE);
+#endif // CYLIBX_ALLOC
 
 	if (!head) { return NULL; }
 
@@ -2141,6 +2601,10 @@ void* __cyx_binheap_new(struct __CyxBinaryHeapParams params) {
 	head->defer_fn = params.defer_fn;
 	head->print_fn = params.print_fn;
 
+#ifdef CYLIBX_ALLOC
+	head->alloc = params.__allocator;
+#endif // CYLIBX_ALLOC
+
 	return heap;
 }
 void __cyx_binheap_expand(void** heap_ptr, size_t n) {
@@ -2150,7 +2614,11 @@ void __cyx_binheap_expand(void** heap_ptr, size_t n) {
 	size_t new_cap = head->cap;
 	while (new_cap < head->len + n) { new_cap <<= 1; }
 
+#ifndef CYLIBX_ALLOC
 	__CyxBinaryHeapHeader* new_head = malloc(__CYX_BINHEAP_HEADER_SIZE + new_cap * head->size);
+#else
+	__CyxBinaryHeapHeader* new_head = evo_alloc_malloc(head->alloc, __CYX_BINHEAP_HEADER_SIZE + new_cap * head->size);
+#endif // CYLIBX_ALLOC
 
 	enum __CyxDataType* type = (void*)(new_head + 1);
 	*type = __CYX_TYPE_BINHEAP;
@@ -2164,9 +2632,19 @@ void __cyx_binheap_expand(void** heap_ptr, size_t n) {
 	new_head->defer_fn = head->defer_fn;
 	new_head->print_fn = head->print_fn;
 
+#ifdef CYLIBX_ALLOC
+	new_head->alloc = head->alloc;
+#endif // CYLIBX_ALLOC
+
 	void* new_heap = (void*)(type + 2);
 	memcpy(new_heap, heap, head->cap * head->size);
+#ifndef CYLIBX_ALLOC
 	free(head);
+#else
+	if (head->alloc->free_f) {
+		evo_alloc_free(head->alloc, head);
+	}
+#endif // CYLIBX_ALLOC
 	*heap_ptr = new_heap;
 }
 void __cyx_binheap_insert(void** heap_ptr, void* val) {
@@ -2292,7 +2770,6 @@ void cyx_binheap_free(void* heap) {
 	__CYX_BINHEAP_TYPECHECK(heap);
 
 	__CyxBinaryHeapHeader* head = __CYX_BINHEAP_GET_HEADER(heap);
-	if (__CYX_TEMP_DELETED_FILLED) { __cyx_temp_reset_deleted(); }
 
 	if (head->defer_fn) {
 		if (!head->is_ptr) {
@@ -2307,7 +2784,15 @@ void cyx_binheap_free(void* heap) {
 	}
 
 
+#ifndef CYLIBX_ALLOC
 	free(head);
+#else
+	if (head->alloc->free_f) {
+		free(head);
+	} else {
+		fprintf(stderr, "ERROR:\tThe allocator you've provided to the binary heap doesn't free single elements as you expected!\n");
+	}
+#endif // CYLIBX_ALLOC
 }
 void cyx_binheap_print(const void* heap) {
 	__CYX_BINHEAP_TYPECHECK(heap);
@@ -2362,10 +2847,18 @@ typedef struct {
 	void (*defer_fn)(void*);
 	void (*print_fn)(const void*);
 
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* alloc;
+#endif // CYLIBX_ALLOC
+
 	char is_ptr;
 } __CyxRingBufHeader;
 
 struct __CyxRingBufParams {
+#ifdef CYLIBX_ALLOC
+	EvoAllocator* __allocator;
+#endif // CYLIBX_ALLOC
+
 	size_t __size;
 
 	char is_ptr;
@@ -2403,18 +2896,23 @@ void cyx_ring_print(const void* ring);
 		__CYX_UNIQUE_VAL__(started) = 0)
 #define cyx_ring_drain(val, ring) __CYX_RINGBUF_TYPECHECK(ring); \
 	for(typeof(*ring)* val = NULL; (val = cyx_ring_pop(ring));)
-#define __cyx_ring_new_params(...) __cyx_ring_new((struct __CyxRingBufParams){ __VA_ARGS__ })
-#define cyx_ring_new(T, ...) (T*)__cyx_ring_new_params(.__size = sizeof(T), __VA_ARGS__)
+
+#define __cyx_ring_new_params(...) (__cyx_ring_new((struct __CyxRingBufParams){ __VA_ARGS__ }))
+#ifndef CYLIBX_ALLOC // ring_new
+#define cyx_ring_new(T, ...) ((T*)__cyx_ring_new_params(.__size = sizeof(T), __VA_ARGS__))
+#else
+#define cyx_ring_new(T, allocator, ...) ((T*)__cyx_ring_new_params(.__allocator = (allocator), .__size = sizeof(T), __VA_ARGS__))
+#endif // CYLIBX_ALLOC
 #define cyx_ring_push(ring, val) do { \
 	typeof(*ring) v = (val); \
 	__cyx_ring_push((void**)&(ring), &v); \
 } while(0)
-#define cyx_ring_push_mult_n(ring, n, mult) __cyx_ring_push_mult_n((void**)&(ring), n, mult);
+#define cyx_ring_push_mult_n(ring, n, mult) (__cyx_ring_push_mult_n((void**)&(ring), n, mult))
 #define cyx_ring_push_mult(ring, ...) do { \
 	typeof(*ring) mult[] = { __VA_ARGS__ }; \
 	cyx_ring_push_mult_n(ring, sizeof(*mult)/sizeof(mult), mult); \
 } while (0)
-#define cyx_ring_pop(ring) (typeof(*ring)*)__cyx_ring_pop(ring)
+#define cyx_ring_pop(ring) ((typeof(*ring)*)__cyx_ring_pop(ring))
 
 #ifdef CYLIBX_STRIP_PREFIX
 
@@ -2422,7 +2920,11 @@ void cyx_ring_print(const void* ring);
 #define ring_foreach(val, ring) cyx_ring_foreach(val, ring)
 #define ring_drain(val, ring) cyx_ring_drain(val, ring)
 
+#ifndef CYLIBX_ALLOC
 #define ring_new(T, ...) cyx_ring_new(T, __VA_ARGS__)
+#else
+#define ring_new(T, allocator, ...) cyx_ring_new(T, allocator, __VA_ARGS__)
+#endif // CYLIBX_ALLOC
 #define ring_push(ring, val) cyx_ring_push(ring, val)
 #define ring_push_mult_n(ring, n, mult) cyx_ring_push_mult_n(ring, n, mult)
 #define ring_push_mult(ring, ...) cyx_ring_push_mult(ring, __VA_ARGS__)
@@ -2436,12 +2938,20 @@ void cyx_ring_print(const void* ring);
 #ifdef CYLIBX_IMPLEMENTATION 
 
 void* __cyx_ring_new(struct __CyxRingBufParams params) {
+#ifndef CYLIBX_ALLOC
 	__CyxRingBufHeader* head = malloc(__CYX_RINGBUF_HEADER_SIZE + __CYX_TYPE_SIZE + params.__size * CYX_RINGBUF_BASE_SIZE);
+#else
+	if (!params.__allocator) { params.__allocator = &EVO_LIBC_ALLOCATOR; }
+	__CyxRingBufHeader* head = evo_alloc_malloc(params.__allocator, __CYX_RINGBUF_HEADER_SIZE + __CYX_TYPE_SIZE + params.__size * CYX_RINGBUF_BASE_SIZE);
+#endif // CYLIBX_ALLOC
 
 	memset(head, 0, __CYX_RINGBUF_HEADER_SIZE + params.__size * CYX_RINGBUF_BASE_SIZE);
 	head->size = params.__size;
 	head->cap = CYX_RINGBUF_BASE_SIZE;
 	head->len = 0;
+#ifdef CYLIBX_ALLOC
+	head->alloc = params.__allocator;
+#endif // CYLIBX_ALLOC
 
 	head->start = 0;
 	head->end = 0;
@@ -2461,7 +2971,11 @@ void __cyx_ring_expand(void** ring_ptr, size_t n) {
 	size_t new_cap = head->cap;
 	while ((new_cap <<= 1) <= head->len + n);
 
+#ifndef CYLIBX_ALLOC
 	__CyxRingBufHeader* new_head = malloc(__CYX_RINGBUF_HEADER_SIZE + __CYX_TYPE_SIZE + new_cap * head->size);
+#else
+	__CyxRingBufHeader* new_head = evo_alloc_malloc(head->alloc, __CYX_RINGBUF_HEADER_SIZE + __CYX_TYPE_SIZE + new_cap * head->size);
+#endif // CYLIBX_ALLOC
 	enum __CyxDataType* type = (void*)(new_head + 1);
 	*type = __CYX_TYPE_RINGBUF;
 	void* new_ring = (void*)(type + 2);
@@ -2477,7 +2991,13 @@ void __cyx_ring_expand(void** ring_ptr, size_t n) {
 		new_head->end++;
 	}
 
+#ifndef CYLIBX_ALLOC
 	free(head);
+#else
+	if (head->alloc->free_f) {
+		evo_alloc_free(head->alloc, head);
+	}
+#endif // CYLIBX_ALLOC
 	*ring_ptr = new_ring;
 }
 void __cyx_ring_push(void** ring_ptr, void* val) {
@@ -2520,7 +3040,8 @@ void* __cyx_ring_pop(void* ring) {
 	if (!head->len) { return NULL; }
 	void* ret = NULL;
 	if (head->defer_fn) {
-		ret = __cyx_temp_alloc_deleted(head->size, __CYX_DATA_GET_AT(head, ring, head->start), head->is_ptr, head->defer_fn);
+		ret = __cyx_temp_malloc(&__cyx_temp_stack, head->size); // TODO: memory leak
+		memcpy(ret, __CYX_DATA_GET_AT(head, ring, head->start), head->size);
 	} else {
 		ret = __CYX_DATA_GET_AT(head, ring, head->start);
 	}
@@ -2532,7 +3053,6 @@ void* __cyx_ring_pop(void* ring) {
 }
 void cyx_ring_free(void* ring) {
 	__CYX_RINGBUF_TYPECHECK(ring);
-	if (__CYX_TEMP_DELETED_FILLED) { __cyx_temp_reset_deleted(); }
 
 	__CyxRingBufHeader* head = __CYX_RINGBUF_GET_HEADER(ring);
 	if (head->defer_fn) {
@@ -2546,7 +3066,15 @@ void cyx_ring_free(void* ring) {
 			}
 		}
 	}
+#ifndef CYLIBX_ALLOC
 	free(head);
+#else
+	if (head->alloc->free_f) {
+		evo_alloc_free(head->alloc, head);
+	} else {
+		fprintf(stderr, "ERROR:\tThe allocator you've provided to the ring buffer doesn't free single elements as you expected!\n");
+	}
+#endif // CYLIBX_ALLOC
 }
 void cyx_ring_print(const void* ring) {
 	__CYX_RINGBUF_TYPECHECK(ring);

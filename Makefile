@@ -1,11 +1,11 @@
 CC = gcc
-FLAGS = -Wall -Wextra -ggdb
+FLAGS = -Wall -Wextra
 
 BUILD_DIR = ./build
 TARGET = main
 
 SRCS_DIR = ./srcs
-SRCS = ttf.c vec2.c ear_clipping.c font.c shapes.c
+SRCS = ttf.c vec2.c ear_clipping.c font.c shapes.c immediate.c mat.c cube_marching.c obj_parse.c
 OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o) $(BUILD_DIR)/main.o
 
 INC_DIR = ./includes/

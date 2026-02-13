@@ -1,9 +1,10 @@
-#include "vec2.h"
 #include <ear_clipping.h>
 
+#include <stdio.h>
 #include <math.h>
 #include <glew.h>
 
+#define CYLIBX_ALLOC
 #include <cylibx.h>
 
 typedef struct Contour Contour;
@@ -73,7 +74,7 @@ static int is_polygon_inside_polygon(Vec2i* poly1, Vec2i* poly2) {
 
 	return 1;
 }
-static uint32_t* ear_clipping(Vec2i* points) {
+static uint32_t* ear_clipping(EvoAllocator* alloc, Vec2i* points) {
 	dedegen_points(points);
 	assert(cyx_array_length(points) >= 3);
 
@@ -88,12 +89,12 @@ static uint32_t* ear_clipping(Vec2i* points) {
 	// }
 	// printf("]\n");
 
-	int* indices = cyx_array_new(int, .reserve = cyx_array_length(points));
+	int* indices = cyx_array_new(int, alloc, .reserve = cyx_array_length(points));
 	for (size_t i = 0; i < cyx_array_length(points); ++i) {
 		cyx_array_append(indices, i);
 	}
 
-	uint32_t* triangles = cyx_array_new(uint32_t, .reserve = (cyx_array_length(points) - 2) * 3);
+	uint32_t* triangles = cyx_array_new(uint32_t, alloc, .reserve = (cyx_array_length(points) - 2) * 3);
 	while (cyx_array_length(indices) > 3) {
 		int ear_found = 0;
 
@@ -148,24 +149,17 @@ static uint32_t* ear_clipping(Vec2i* points) {
 		cyx_array_append_mult(triangles, indices[1], indices[0], indices[2]);
 	}
 
-	cyx_array_free(indices);
+	// cyx_array_free(indices);
 	return triangles;
 }
 
-static void contour_free(void* val) {
-	Contour* c = val;
-	cyx_array_free(c->points);
-	if (c->type == CONTOUR_OUTSIDE && c->holes) {
-		cyx_array_free(c->holes);
-	}
-}
-static int contour_add(Contour* arr, Contour in) {
+static int contour_add(EvoAllocator* alloc, Contour* arr, Contour in) {
 	in.type = CONTOUR_INSIDE;
 	for (size_t i = 0; i < cyx_array_length(arr); ++i) {
 		Contour* out = arr + i;
 		if (is_polygon_inside_polygon(out->points, in.points)) {
 			if (!out->holes) {
-				out->holes = cyx_array_new(Contour, .defer_fn = contour_free, .reserve = 2);
+				out->holes = cyx_array_new(Contour, alloc, .reserve = 2);
 			}
 			cyx_array_append(out->holes, in);
 			return 1;
@@ -177,7 +171,7 @@ static int contour_add(Contour* arr, Contour in) {
 static Vec2i point_to_vec2i(Point p) {
 	return (Vec2i){ .x = p.x, .y = p.y };
 }
-static Vec2i* transform_points_to_vec2i(Point** points_ptr) {
+static Vec2i* transform_points_to_vec2i(EvoAllocator* alloc, Point** points_ptr) {
 repeat:
 	for (size_t i = 0; i < cyx_array_length(*points_ptr); ++i) {
 		Point p1 = (*points_ptr)[i];
@@ -190,7 +184,7 @@ repeat:
 	assert(cyx_array_length(*points_ptr) % 2 == 0);
 
 	Point* points = *points_ptr;
-	Vec2i* res = cyx_array_new(Vec2i);
+	Vec2i* res = cyx_array_new(Vec2i, alloc);
 	for (size_t i = 0; i < cyx_array_length(points); i += 2) {
 		Point p1 = points[i];
 		Point p2 = points[(i + 1) % cyx_array_length(points)];
@@ -206,12 +200,12 @@ repeat:
 	}
 	return res;
 }
-static Contour* turn_glyph_into_contours(GlyphData* glyph) {
-	Contour* res = cyx_array_new(Contour, .defer_fn = contour_free, .reserve = 4);
+static Contour* turn_glyph_into_contours(EvoAllocator* alloc, GlyphData* glyph) {
+	Contour* res = cyx_array_new(Contour, alloc, .reserve = 4);
 	size_t prev = 0;
 	
-	Point* working_points = cyx_array_new(Point);
-	Contour* saved_in = cyx_array_new(Contour, .reserve = 4);
+	Point* working_points = cyx_array_new(Point, alloc);
+	Contour* saved_in = cyx_array_new(Contour, alloc, .reserve = 4);
 	int main_winding = 0;
 	for (size_t i = 0; i < cyx_array_length(glyph->contour_end_indicies); ++i) {
 		cyx_array_length(working_points) = 0;
@@ -219,7 +213,7 @@ static Contour* turn_glyph_into_contours(GlyphData* glyph) {
 		for (size_t j = prev; j <= (size_t)glyph->contour_end_indicies[i]; ++j) {
 			cyx_array_append(working_points, glyph->points[j]);
 		}
-		Vec2i* points = transform_points_to_vec2i(&working_points);
+		Vec2i* points = transform_points_to_vec2i(alloc, &working_points);
 		// printf("{ ");
 		// for (size_t j = 0; j < cyx_array_length(points); ++j) {
 		// 	if (j) printf(", ");
@@ -235,20 +229,20 @@ static Contour* turn_glyph_into_contours(GlyphData* glyph) {
 			if (cyx_array_length(res) == 0) {
 				cyx_array_append(saved_in, ((Contour){ .points = points, .type = CONTOUR_INSIDE }));
 			} else {
-				contour_add(res, (Contour){ .points = points, .type = CONTOUR_INSIDE });
+				contour_add(alloc, res, (Contour){ .points = points, .type = CONTOUR_INSIDE });
 			}
 		}
 		prev = glyph->contour_end_indicies[i] + 1;
 	}
-	if (cyx_array_length(saved_in) > 0) {
-		for (size_t j = 0; j < cyx_array_length(saved_in); ++j) {
-			if (!contour_add(res, saved_in[j])) {
-				contour_free(saved_in + j);
-			}
-		}
-	}
-	cyx_array_free(saved_in);
-	cyx_array_free(working_points);
+	// if (cyx_array_length(saved_in) > 0) {
+	// 	for (size_t j = 0; j < cyx_array_length(saved_in); ++j) {
+	// 		if (!contour_add(res, saved_in[j])) {
+	// 			contour_free(saved_in + j);
+	// 		}
+	// 	}
+	// }
+	// cyx_array_free(saved_in);
+	// cyx_array_free(working_points);
 	return res;
 }
 static int find_max_x_index(Contour* inside) {
@@ -261,8 +255,8 @@ static int find_max_x_index(Contour* inside) {
 	}
 	return (int)idx;
 }
-static int* get_reflex_angles(Vec2i* points) {
-	int* reflex = cyx_array_new(int);
+static int* get_reflex_angles(EvoAllocator* alloc, Vec2i* points) {
+	int* reflex = cyx_array_new(int, alloc);
 	for (int i = 0; i < (int)cyx_array_length(points); ++i) {
 		Vec2i A = points[i];
 		Vec2i B = points[(i + 1) % cyx_array_length(points)];
@@ -273,7 +267,7 @@ static int* get_reflex_angles(Vec2i* points) {
 	}
 	return reflex;
 }
-static int shoot_ray(Contour* in, Vec2i* points) {
+static int shoot_ray(EvoAllocator* alloc, Contour* in, Vec2i* points) {
 	assert(in->type == CONTOUR_INSIDE);
 
 	int m = find_max_x_index(in); // step 1
@@ -314,7 +308,7 @@ static int shoot_ray(Contour* in, Vec2i* points) {
 	Vec2i P = Vi_1.x > Vi.x ? Vi_1 : Vi;
 	int P_idx = Vi_1.x > Vi.x ? (i + 1) % cyx_array_length(points) : i; // step 4
 
-	int* reflex_angles = get_reflex_angles(points);
+	int* reflex_angles = get_reflex_angles(alloc, points);
 	for (int j = 0; j < (int)cyx_array_length(reflex_angles); ++j) { // step 5
 		int idx = reflex_angles[j];
 		Vec2i A = points[idx];
@@ -326,7 +320,7 @@ static int shoot_ray(Contour* in, Vec2i* points) {
 		}
 	}
 
-	cyx_array_free(reflex_angles);
+	// cyx_array_free(reflex_angles);
 	return P_idx;
 arent_outside:
 	// step 6
@@ -345,13 +339,13 @@ arent_outside:
 		}
 		assert(res_idx != -1);
 
-		cyx_array_free(reflex_angles);
+		// cyx_array_free(reflex_angles);
 		return res_idx;
 	}
 	return 0;
 }
-static Vec2i* connect_points(Vec2i* in_points, Vec2i* out_points, size_t in_idx, size_t out_idx) {
-	Vec2i* points = cyx_array_new(Vec2i);
+static Vec2i* connect_points(EvoAllocator* alloc, Vec2i* in_points, Vec2i* out_points, size_t in_idx, size_t out_idx) {
+	Vec2i* points = cyx_array_new(Vec2i, alloc);
 	for (size_t i = 0; i <= out_idx; ++i) {
 		cyx_array_append(points, out_points[i]);
 	}
@@ -388,11 +382,11 @@ typedef struct {
 	uint32_t* triangles;
 	float* vertices;
 } TriangleVerticesPair;
-static TriangleVerticesPair turn_contour_into_triangles(Contour* contours) {
+static TriangleVerticesPair turn_contour_into_triangles(EvoAllocator* alloc, Contour* contours) {
 	assert(cyx_array_length(contours) > 0);
 
-	uint32_t* triangles = cyx_array_new(uint32_t);
-	float* vertices = cyx_array_new(float);
+	uint32_t* triangles = cyx_array_new(uint32_t, alloc);
+	float* vertices = cyx_array_new(float, alloc);
 	size_t vertices_len_saved = 0;
 	for (size_t c = 0; c < cyx_array_length(contours); ++c) {
 		Contour* contour = contours + c;
@@ -412,8 +406,8 @@ static TriangleVerticesPair turn_contour_into_triangles(Contour* contours) {
 			}
 
 			int in_idx = find_max_x_index(in);
-			int out_idx = shoot_ray(in, contour->points);
-			Vec2i* points = connect_points(in->points, contour->points, in_idx, out_idx);
+			int out_idx = shoot_ray(alloc, in, contour->points);
+			Vec2i* points = connect_points(alloc, in->points, contour->points, in_idx, out_idx);
 
 			for (size_t i = 1; i < cyx_array_length(contour->holes); ++i) {
 				in = contour->holes + i;
@@ -422,21 +416,21 @@ static TriangleVerticesPair turn_contour_into_triangles(Contour* contours) {
 				}
 
 				int in_idx = find_max_x_index(in);
-				int out_idx = shoot_ray(in, points);
+				int out_idx = shoot_ray(alloc, in, points);
 
-				Vec2i* new_points = connect_points(in->points, points, in_idx, out_idx);
-				cyx_array_free(points);
+				Vec2i* new_points = connect_points(alloc, in->points, points, in_idx, out_idx);
+				// cyx_array_free(points);
 				points = new_points;
 			}
-			new_triangles = ear_clipping(points);
+			new_triangles = ear_clipping(alloc, points);
 
 			for (size_t i = 0; i < cyx_array_length(points); ++i) {
 				cyx_array_append_mult(vertices, points[i].x, points[i].y, 0.0f);
 			}
 
-			cyx_array_free(points);
+			// cyx_array_free(points);
 		} else {
-			new_triangles = ear_clipping(contour->points);
+			new_triangles = ear_clipping(alloc, contour->points);
 
 			for (size_t i = 0; i < cyx_array_length(contour->points); ++i) {
 				cyx_array_append_mult(vertices, contour->points[i].x, contour->points[i].y, 0.0f);
@@ -450,7 +444,7 @@ static TriangleVerticesPair turn_contour_into_triangles(Contour* contours) {
 		vertices_len_saved = cyx_array_length(vertices) / 3;
 		cyx_array_append_mult_n(triangles, cyx_array_length(new_triangles), new_triangles);
 
-		cyx_array_free(new_triangles);
+		// cyx_array_free(new_triangles);
 	}
 
 	return (TriangleVerticesPair){ .triangles = triangles, .vertices = vertices };
@@ -469,29 +463,10 @@ Polygon __turn_glyph_into_polygon(struct __PolygonCreateParams params) {
 	GlyphData* glyph = params.__glyph;
 	uint32_t program = params.__program;
 
-	Contour* cs = turn_glyph_into_contours(glyph);
-	// for (size_t i = 0; i < cyx_array_length(cs); ++i) {
-	// 	Contour* c = cs + i;
-	// 	if (c->holes) {
-	// 		printf("%zu, %zu: { ", i, cyx_array_length(c->holes));
-	// 		for (size_t j = 0; j < cyx_array_length(c->points); ++j) {
-	// 			Vec2i* v = c->points + j;
-	// 			if (j) printf(", ");
-	// 			printf("(%d, %d)", v->x, v->y);
-	// 		}
-	// 		printf(" }\n");
-	// 	} else {
-	// 		printf("%zu: { ", i);
-	// 		for (size_t j = 0; j < cyx_array_length(c->points); ++j) {
-	// 			Vec2i* v = c->points + j;
-	// 			if (j) printf(", ");
-	// 			printf("(%d, %d)", v->x, v->y);
-	// 		}
-	// 		printf(" }\n");
-	// 	}
-	// }
+	EvoAllocator temp = evo_allocator_arena_heap(EVO_KB(16));
 
-	TriangleVerticesPair pair = turn_contour_into_triangles(cs);
+	Contour* cs = turn_glyph_into_contours(&temp, glyph);
+	TriangleVerticesPair pair = turn_contour_into_triangles(&temp, cs);
 	uint32_t* triangles = pair.triangles;
 	float* vertices = pair.vertices;
 
@@ -503,8 +478,6 @@ Polygon __turn_glyph_into_polygon(struct __PolygonCreateParams params) {
 		vertices[i + 1] *= -scale; // y
 		vertices[i + 2] = 0.0f; // z
 	}
-
-	cyx_array_free(cs);
 
 	Polygon poly = {
 		.program = program,
@@ -528,22 +501,39 @@ Polygon __turn_glyph_into_polygon(struct __PolygonCreateParams params) {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), NULL);
 	glEnableVertexAttribArray(0);
 
-	cyx_array_free(triangles);
-	cyx_array_free(vertices);
+	evo_allocator_free(&temp);
 	
 	return poly;
 }
-void poly_show(Polygon* poly) {
+void poly_show(Polygon* poly, int x, int y, float w, float h, int screen_w, int screen_h) {
+	glDisable(GL_DEPTH_TEST);
 	glUseProgram(poly->program);
 
 	int uniform_color = glGetUniformLocation(poly->program, "color");
 	glUniform4f(uniform_color, poly->clr.r / 255.0, poly->clr.g / 255.0, poly->clr.b / 255.0, 1.0);
 
-	int uniform_pos = glGetUniformLocation(poly->program, "screen_pos");
-	glUniform2f(uniform_pos, poly->pos.x, poly->pos.y);
+	int uniform_model = glGetUniformLocation(poly->program, "u_model");
+	int uniform_projection = glGetUniformLocation(poly->program, "u_proj");
+	float proj[16] = { 
+		[0]  = 2.0f / screen_w, // 2 / (right - left)
+		[5]  = 2.0f / -screen_h, // 2 / (top - bottom)
+		[10] = -1.0f, // -2 / (far - near)
+		[12] = -1.0f, // -(right + left) / (right - left)
+		[13] = 1.0f, // -(top + bottom) / (top - bottom)
+		// [14] = 0.0f, // -(far + near) / (far - near)
+		[15] = 1.0f, // 1
+	};
+	glUniformMatrix4fv(uniform_projection, 1, GL_FALSE, proj);
 
-	int uniform_projection = glGetUniformLocation(poly->program, "projection");
-	glUniformMatrix4fv(uniform_projection, 1, GL_FALSE, poly->projection_mat);
+	float model[16] = {
+		[0]  = w / 2.f,
+		[5]  = h / 2.f,
+		[10] = 1.f,
+		[12] = x + w / 2.f,
+		[13] = y + h / 2.f,
+		[15] = 1.f,
+	};
+	glUniformMatrix4fv(uniform_model, 1, GL_FALSE, model);
 
 	glBindVertexArray(poly->vao);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, poly->ebo);
@@ -552,6 +542,7 @@ void poly_show(Polygon* poly) {
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
 	glUseProgram(0);
+	glEnable(GL_DEPTH_TEST);
 }
 void poly_free(Polygon* poly) {
 	glDeleteVertexArrays(1, &poly->vao);

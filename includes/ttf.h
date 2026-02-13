@@ -1,6 +1,7 @@
 #ifndef __TTF_H__
 #define __TTF_H__
 
+#include <evoco.h>
 #include <stdint.h>
 
 typedef struct {
@@ -24,6 +25,8 @@ typedef struct {
 } GlyphData;
 
 typedef struct {
+	EvoArena arena;
+	EvoAllocator alloc;
 	GlyphData glyphs[128];
 	int32_t units_per_em;
 } TTF;

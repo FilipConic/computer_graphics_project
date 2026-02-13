@@ -1,9 +1,11 @@
 #include <ttf.h>
 
-#include <cylibx.h>
 #include <stdio.h>
 #include <limits.h>
 #include <stddef.h>
+
+#define CYLIBX_ALLOC
+#include <cylibx.h>
 
 typedef struct {
 	uint32_t glyph_index;
@@ -88,8 +90,8 @@ static void skip_bytes(FILE* file, size_t num_bytes) {
 	fseek(file, num_bytes, SEEK_CUR);
 }
 
-static TagKV* read_table_locations(FILE* file) {
-	TagKV* tables = cyx_hashmap_new(TagKV, cyx_hash_int32, cyx_eq_int32);
+static TagKV* read_table_locations(EvoAllocator* allocator, FILE* file) {
+	TagKV* tables = cyx_hashmap_new(TagKV, allocator, cyx_hash_int32, cyx_eq_int32);
 
 	skip_bytes(file, 4);
 	int num_tables = read_u16(file);
@@ -107,8 +109,8 @@ static TagKV* read_table_locations(FILE* file) {
 
 	return tables;
 }
-static uint32_t* get_all_glyph_locations(FILE* file, int num_glyphs, int num_bytes, uint32_t loca_location, uint32_t glyf_location) {
-	uint32_t* all_glyph_locs = cyx_array_new(uint32_t, .reserve = num_glyphs);
+static uint32_t* get_all_glyph_locations(EvoAllocator* allocator, FILE* file, int num_glyphs, int num_bytes, uint32_t loca_location, uint32_t glyf_location) {
+	uint32_t* all_glyph_locs = cyx_array_new(uint32_t, allocator, .reserve = num_glyphs);
 
 	for (int i = 0; i < num_glyphs; ++i) {
 		fseek(file, loca_location + i * num_bytes, SEEK_SET);
@@ -118,7 +120,7 @@ static uint32_t* get_all_glyph_locations(FILE* file, int num_glyphs, int num_byt
 
 	return all_glyph_locs;
 }
-static GlyphMap* get_unicode_to_glyph_index_mappings(FILE* file, uint32_t cmap_location) {
+static GlyphMap* get_unicode_to_glyph_index_mappings(EvoAllocator* allocator, FILE* file, uint32_t cmap_location) {
 	fseek(file, cmap_location, SEEK_SET);
 
 	skip_bytes(file, 2); // version
@@ -160,30 +162,32 @@ static GlyphMap* get_unicode_to_glyph_index_mappings(FILE* file, uint32_t cmap_l
 		return NULL;
 	}
 
-	GlyphMap* mappings = cyx_array_new(GlyphMap);
+	GlyphMap* mappings = cyx_array_new(GlyphMap, allocator);
 	char has_read_missing_glyph = 0;
 	if (format == 4) {
 		skip_bytes(file, 4); // length, language_code
 		int segment_count = read_u16(file) >> 1;
 		skip_bytes(file, 6);
 
-		int* end_codes = cyx_array_new(int, .reserve = segment_count);
+		EvoTempStack temp = { 0 };
+		EvoAllocator temp_allocator = evo_allocator_temp(&temp);
+		int* end_codes = cyx_array_new(int, &temp_allocator, .reserve = segment_count);
 		for (int i = 0; i < segment_count; ++i) {
 			cyx_array_append(end_codes, read_u16(file));
 		}
 		skip_bytes(file, 2);
 
-		int* start_codes = cyx_array_new(int, .reserve = segment_count);
+		int* start_codes = cyx_array_new(int, &temp_allocator, .reserve = segment_count);
 		for (int i = 0; i < segment_count; ++i) {
 			cyx_array_append(start_codes, read_u16(file));
 		}
 
-		int* id_deltas = cyx_array_new(int, .reserve = segment_count);
+		int* id_deltas = cyx_array_new(int, &temp_allocator, .reserve = segment_count);
 		for (int i = 0; i < segment_count; ++i) {
 			cyx_array_append(id_deltas, read_u16(file));
 		}
 
-		int* id_range_offsets = cyx_array_new(int, .reserve = 2 * segment_count);
+		int* id_range_offsets = cyx_array_new(int, &temp_allocator, .reserve = 2 * segment_count);
 		for (int i = 0; i < segment_count; ++i) {
 			cyx_array_append(id_deltas, ftell(file)); // read location
 			cyx_array_append(id_deltas, read_u16(file)); // offset
@@ -218,11 +222,6 @@ static GlyphMap* get_unicode_to_glyph_index_mappings(FILE* file, uint32_t cmap_l
 				++curr_code;
 			}
 		}
-
-		cyx_array_free(end_codes);
-		cyx_array_free(start_codes);
-		cyx_array_free(id_deltas);
-		cyx_array_free(id_range_offsets);
 	} else if (format == 12) {
 		skip_bytes(file, 10);
 		uint32_t num_groups = read_u32(file);
@@ -252,8 +251,8 @@ static GlyphMap* get_unicode_to_glyph_index_mappings(FILE* file, uint32_t cmap_l
 
 	return mappings;
 }
-static GlyphData read_glyph(FILE* file, uint32_t* all_glyph_locations, uint32_t glyph_index);
-static GlyphData read_next_component_glyph(FILE* file, uint32_t* glyph_locations, uint32_t glyph_loc, uint8_t* repeat) {
+static GlyphData read_glyph(EvoAllocator* temp, EvoAllocator* perm, FILE* file, uint32_t* all_glyph_locations, uint32_t glyph_index);
+static GlyphData read_next_component_glyph(EvoAllocator* temp, FILE* file, uint32_t* glyph_locations, uint32_t glyph_loc, uint8_t* repeat) {
 	uint16_t flag = read_u16(file);
 	uint32_t glyph_index = read_u16(file);
 
@@ -262,8 +261,8 @@ static GlyphData read_next_component_glyph(FILE* file, uint32_t* glyph_locations
 	if (comp_glyph_loc == glyph_loc) {
 		*repeat = 0;
 		return (GlyphData){
-			.points = cyx_array_new(Point),
-			.contour_end_indicies = cyx_array_new(int),
+			.points = cyx_array_new(Point, temp),
+			.contour_end_indicies = cyx_array_new(int, temp),
 		};
 	}
 
@@ -296,7 +295,7 @@ static GlyphData read_next_component_glyph(FILE* file, uint32_t* glyph_locations
 	}
 
 	uint32_t curr_pos = ftell(file);
-	GlyphData simple_glyph = read_glyph(file, glyph_locations, glyph_index);
+	GlyphData simple_glyph = read_glyph(temp, temp, file, glyph_locations, glyph_index);
 	fseek(file, curr_pos, SEEK_SET);
 
 	for (size_t i = 0; i < cyx_array_length(simple_glyph.points); ++i) {
@@ -313,7 +312,7 @@ static GlyphData read_next_component_glyph(FILE* file, uint32_t* glyph_locations
 	*repeat = get_compound_flag(flag, FLAG_IS_MORE_COMPONENTS_AFTER_THIS);
 	return simple_glyph;
 }
-static GlyphData read_simple_glyph(FILE* file, uint32_t* glyph_locations, uint32_t glyph_index) {
+static GlyphData read_simple_glyph(EvoAllocator* temp, EvoAllocator* perm, FILE* file, uint32_t* glyph_locations, uint32_t glyph_index) {
 	fseek(file, glyph_locations[glyph_index], SEEK_SET);
 
 	GlyphData glyph = { 0 };
@@ -331,7 +330,7 @@ static GlyphData read_simple_glyph(FILE* file, uint32_t* glyph_locations, uint32
 	glyph.max_y = read_i16(file);
 
 	int num_points = 0;
-	int* contour_end_indices = cyx_array_new(int, .reserve = contour_count);
+	int* contour_end_indices = cyx_array_new(int, perm, .reserve = contour_count);
 	for (int i = 0; i < contour_count; ++i) {
 		int contour_end_idx = read_u16(file);
 		num_points = mmax(num_points, contour_end_idx + 1);
@@ -341,8 +340,8 @@ static GlyphData read_simple_glyph(FILE* file, uint32_t* glyph_locations, uint32
 	int instr_len = read_i16(file);
 	skip_bytes(file, instr_len);
 
-	uint8_t* flags = cyx_array_new(uint8_t, .reserve = num_points);
-	Point* points = cyx_array_new(Point, .reserve = num_points);
+	uint8_t* flags = cyx_array_new(uint8_t, temp, .reserve = num_points);
+	Point* points = cyx_array_new(Point, perm, .reserve = num_points);
 
 	for (int i = 0; i < num_points; ++i) {
 		uint8_t flag = read_u8(file);
@@ -382,13 +381,11 @@ static GlyphData read_simple_glyph(FILE* file, uint32_t* glyph_locations, uint32
 		points[i].y = y;
 	}
 
-	cyx_array_free(flags);
-
 	glyph.points = points;
 	glyph.contour_end_indicies = contour_end_indices;
 	return glyph;
 }
-static GlyphData read_compound_glyph(FILE* file, uint32_t* glyph_locations, uint32_t glyph_index) {
+static GlyphData read_compound_glyph(EvoAllocator* temp, EvoAllocator* perm, FILE* file, uint32_t* glyph_locations, uint32_t glyph_index) {
 	GlyphData glyph = { 0 };
 	glyph.glyph_index = glyph_index;
 
@@ -401,40 +398,37 @@ static GlyphData read_compound_glyph(FILE* file, uint32_t* glyph_locations, uint
 	glyph.max_x = read_i16(file);
 	glyph.max_y = read_i16(file);
 
-	Point* all_points = cyx_array_new(Point);
-	int* all_contour_end_indicies = cyx_array_new(int);
+	Point* all_points = cyx_array_new(Point, perm);
+	int* all_contour_end_indicies = cyx_array_new(int, perm);
 
 	uint8_t repeat = 1;
 	while (repeat) {
-		GlyphData component_glyph = read_next_component_glyph(file, glyph_locations, glyph_loc, &repeat);
+		GlyphData component_glyph = read_next_component_glyph(temp, file, glyph_locations, glyph_loc, &repeat);
 
 		for (size_t i = 0; i < cyx_array_length(component_glyph.contour_end_indicies); ++i) {
 			cyx_array_append(all_contour_end_indicies, component_glyph.contour_end_indicies[i] + cyx_array_length(all_points));
 		}
 		cyx_array_append_mult_n(all_points, cyx_array_length(component_glyph.points), component_glyph.points);
-
-		cyx_array_free(component_glyph.points);
-		cyx_array_free(component_glyph.contour_end_indicies);
 	}
 
 	glyph.points = all_points;
 	glyph.contour_end_indicies = all_contour_end_indicies;
 	return glyph;
 }
-static GlyphData read_glyph(FILE* file, uint32_t* all_glyph_locations, uint32_t glyph_index) {
+static GlyphData read_glyph(EvoAllocator* temp, EvoAllocator* perm, FILE* file, uint32_t* all_glyph_locations, uint32_t glyph_index) {
 	uint32_t glyph_loc = all_glyph_locations[glyph_index];
 
 	fseek(file, glyph_loc, SEEK_SET);
 	int contour_count = read_i16(file);
 
 	if (contour_count >= 0) {
-		return read_simple_glyph(file, all_glyph_locations, glyph_index);
+		return read_simple_glyph(temp, perm, file, all_glyph_locations, glyph_index);
 	} else {
-		return read_compound_glyph(file, all_glyph_locations, glyph_index);
+		return read_compound_glyph(temp, perm, file, all_glyph_locations, glyph_index);
 	}
 }
-static GlyphData* read_all_glyphs(FILE* file, uint32_t* all_glyph_locations, GlyphMap* mappings) {
-	GlyphData* glyphs = cyx_array_new(GlyphData, .reserve = 128);
+static GlyphData* read_all_glyphs(EvoAllocator* temp, EvoAllocator* perm, FILE* file, uint32_t* all_glyph_locations, GlyphMap* mappings) {
+	GlyphData* glyphs = cyx_array_new(GlyphData, perm, .reserve = 128);
 	memset(glyphs, 0, 128 * sizeof(GlyphData));
 	cyx_array_length(glyphs) = 128;
 
@@ -444,7 +438,7 @@ static GlyphData* read_all_glyphs(FILE* file, uint32_t* all_glyph_locations, Gly
 		if (mapping.unicode_code < 128) {
 			int ascii_val = mapping.unicode_code % 128;
 
-			GlyphData glyph = read_glyph(file, all_glyph_locations, mapping.glyph_index);
+			GlyphData glyph = read_glyph(temp, perm, file, all_glyph_locations, mapping.glyph_index);
 			glyph.ascii_val = ascii_val;
 			glyph.found = 1;
 			glyphs[ascii_val] = glyph;
@@ -455,6 +449,8 @@ static GlyphData* read_all_glyphs(FILE* file, uint32_t* all_glyph_locations, Gly
 }
 
 TTF ttf_parse(const char* font_file_path) {
+	EvoAllocator allocator = evo_allocator_arena_heap(EVO_KB(16));
+
 	TTF ttf = { 0 };
 
 	FILE* file = fopen(font_file_path, "r");
@@ -463,7 +459,7 @@ TTF ttf_parse(const char* font_file_path) {
 		return ttf;
 	}
 
-	TagKV* table_locations = read_table_locations(file);
+	TagKV* table_locations = read_table_locations(&allocator, file);
 
 	// cyx_hashmap_foreach(val, table_locations) {
 	// 	printf("Tag: %.4s\tValue: %u\n", (char*)&val->key, val->value);
@@ -477,7 +473,6 @@ TTF ttf_parse(const char* font_file_path) {
 	uint32_t* hmtx_location = cyx_hashmap_get(table_locations, *(uint32_t*)"hmtx");
 	if (!glyf_location || !loca_location || !cmap_location || !head_location || !maxp_location || !hhea_location || !hmtx_location) {
 		fprintf(stderr, "ERROR:\tOne of the required tables not provided in the TTF file [\"%s\"]\n", font_file_path);
-		cyx_hashmap_free(table_locations);
 		return ttf;
 	}
 
@@ -493,17 +488,15 @@ TTF ttf_parse(const char* font_file_path) {
 	skip_bytes(file, 4);
 	int num_glyphs = read_u16(file);
 
-	uint32_t* all_glyph_locations = get_all_glyph_locations(file, num_glyphs, num_bytes_per_loc_lookup, *loca_location, *glyf_location);
+	uint32_t* all_glyph_locations = get_all_glyph_locations(&allocator, file, num_glyphs, num_bytes_per_loc_lookup, *loca_location, *glyf_location);
 
-	GlyphMap* mappings = get_unicode_to_glyph_index_mappings(file, *cmap_location);
+	GlyphMap* mappings = get_unicode_to_glyph_index_mappings(&allocator, file, *cmap_location);
 	if (!mappings) {
-		cyx_array_free(all_glyph_locations);
-		cyx_hashmap_free(table_locations);
 		return ttf;
 	}
-
-	GlyphData* glyphs = read_all_glyphs(file, all_glyph_locations, mappings);
-	int* layout_data = cyx_array_new(int, .reserve = 2 * num_glyphs);
+	ttf.arena = evo_arena_new(EVO_KB(1));
+	ttf.alloc = evo_allocator_arena(&ttf.arena);
+	GlyphData* glyphs = read_all_glyphs(&allocator, &ttf.alloc, file, all_glyph_locations, mappings);
 
 	// Parse 'hhea' table
 	fseek(file, *hhea_location, SEEK_SET);
@@ -513,6 +506,8 @@ TTF ttf_parse(const char* font_file_path) {
 	// Parse 'hmtx' table
 	fseek(file, *hmtx_location, SEEK_SET);
 	int last_advance_width = 0;
+
+	int* layout_data = cyx_array_new(int, &allocator, .reserve = 2 * num_glyphs);
 	for (int i = 0; i < num_advance_width_metrics; ++i) {
 		int advance_width = read_u16(file);
 		int left_side_bearing = read_i16(file);
@@ -537,11 +532,7 @@ TTF ttf_parse(const char* font_file_path) {
 	memcpy(ttf.glyphs, glyphs, 128 * sizeof(GlyphData));
 
 	fclose(file);
-	cyx_hashmap_free(table_locations);
-	cyx_array_free(mappings);
-	cyx_array_free(layout_data);
-	cyx_array_free(all_glyph_locations);
-	cyx_array_free(glyphs);
+	evo_allocator_free(&allocator);
 	return ttf;
 }
 GlyphData* ttf_get(TTF* ttf, char c) {
@@ -552,10 +543,5 @@ GlyphData* ttf_get(TTF* ttf, char c) {
 	return data;
 }
 void ttf_free(TTF* ttf) {
-	for (size_t i = 0; i < 128; ++i) {
-		if (ttf->glyphs[i].found) {
-			cyx_array_free(ttf->glyphs[i].points);
-			cyx_array_free(ttf->glyphs[i].contour_end_indicies);
-		}
-	}
+	evo_arena_destroy(&ttf->arena);
 }

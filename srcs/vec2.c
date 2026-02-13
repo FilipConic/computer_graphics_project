@@ -1,6 +1,8 @@
 #include <vec2.h>
 #include <math.h>
 #include <stdio.h>
+
+#define CYLIBX_ALLOC
 #include <cylibx.h>
 
 Vec2i vec2f_to_vec2i(Vec2f a) {
